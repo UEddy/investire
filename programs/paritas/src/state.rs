@@ -20,13 +20,3 @@ pub struct Pair {
     pub authority: Pubkey,
     pub bump: u8,
 }
-
-impl Pair {
-    pub fn sorted(a: Pubkey, b: Pubkey) -> (Pubkey, Pubkey) {
-        if a < b {
-            (a, b)
-        } else {
-            (b, a)
-        }
-    }
-}

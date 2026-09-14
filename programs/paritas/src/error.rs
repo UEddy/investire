@@ -10,8 +10,8 @@ pub enum ParitasError {
     InvalidMultiplier,
     #[msg("fixed point math overflowed")]
     MathOverflow,
-    #[msg("the two mints in a pair must be different")]
-    DuplicateMint,
+    #[msg("mint_a must be lexicographically smaller than mint_b")]
+    MintsNotSorted,
     #[msg("fee exceeds the maximum allowed basis points")]
     FeeTooHigh,
     #[msg("swap output is below the caller's minimum")]
