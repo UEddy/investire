@@ -12,7 +12,7 @@ paritas = "5QkWw7s4dQwAhNZQoKGDTrb6xqcZnMi8XPA7tAkD29LV"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
