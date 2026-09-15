@@ -71,6 +71,10 @@ pub fn swap(
         .ok_or(ParitasError::MathOverflow)?;
 
     let amount_out = multiplier::convert_amount(amount_in_after_fee, rate)?;
+
+    // An input small enough to truncate to nothing across a decimal boundary
+    // would otherwise take the user's tokens and transfer back zero.
+    require!(amount_out > 0, ParitasError::ZeroAmount);
     require!(amount_out >= min_amount_out, ParitasError::SlippageExceeded);
 
     let mint_a_key = ctx.accounts.mint_a.key();

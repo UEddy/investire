@@ -18,4 +18,16 @@ pub enum ParitasError {
     SlippageExceeded,
     #[msg("swap amount must be greater than zero")]
     ZeroAmount,
+    #[msg("vault symbol exceeds the maximum allowed length")]
+    SymbolTooLong,
+    #[msg("vault symbol must not be empty")]
+    EmptySymbol,
+    #[msg("only the vault's authority may perform this action")]
+    Unauthorized,
+    #[msg("the vault's balance of that wrapper is insufficient for this withdrawal")]
+    InsufficientVaultBalance,
+    #[msg("mint is not one of the two mints registered on this pair")]
+    MintNotInPair,
+    #[msg("the pool's balance of that mint is insufficient for this withdrawal")]
+    InsufficientPoolBalance,
 }
