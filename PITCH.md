@@ -1,4 +1,4 @@
-# Paritas (superseded — see SPEC.md)
+# Paritas (superseded, see SPEC.md)
 
 The correctness layer. Product framing moved to the savings app.
 
