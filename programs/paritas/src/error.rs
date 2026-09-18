@@ -30,4 +30,44 @@ pub enum ParitasError {
     MintNotInPair,
     #[msg("the pool's balance of that mint is insufficient for this withdrawal")]
     InsufficientPoolBalance,
+    #[msg("cadence is shorter than the minimum allowed interval")]
+    CadenceTooShort,
+    #[msg("schedule amount is below the dust floor for this payment mint")]
+    AmountBelowDustFloor,
+    #[msg("schedule is not active")]
+    ScheduleInactive,
+    #[msg("schedule is not due yet")]
+    ScheduleNotDue,
+    #[msg("token account does not hold the schedule's payment mint")]
+    PaymentMintMismatch,
+    #[msg("token account is not owned by the expected authority")]
+    TokenAccountOwnerMismatch,
+    #[msg("schedule does not belong to this vault")]
+    VaultMismatch,
+    #[msg("keeper fee is not smaller than the schedule amount")]
+    FeeExceedsAmount,
+    #[msg("execution receipt does not match this execution")]
+    ExecutionReceiptMismatch,
+    #[msg("no begin_execution for this schedule in this transaction")]
+    MissingBeginExecution,
+    #[msg("more than one begin_execution in this transaction")]
+    DuplicateBeginExecution,
+    #[msg("no settle_execution in this transaction")]
+    MissingSettleExecution,
+    #[msg("more than one settle_execution in this transaction")]
+    DuplicateSettleExecution,
+    #[msg("begin_execution must come before settle_execution")]
+    ExecutionOrderInvalid,
+    #[msg("settle_execution must be a top level instruction, not a CPI")]
+    SettleNotTopLevel,
+    #[msg("begin_execution must be a top level instruction, not a CPI")]
+    BeginNotTopLevel,
+    #[msg("this transaction carries a paritas instruction that is not part of the execution")]
+    UnexpectedParitasInstruction,
+    #[msg("transaction has more instructions than introspection will scan")]
+    TransactionTooLong,
+    #[msg("the swap delivered nothing to the execution escrow")]
+    NothingReceived,
+    #[msg("equity units received are below the required minimum")]
+    MinEquityUnitsNotMet,
 }

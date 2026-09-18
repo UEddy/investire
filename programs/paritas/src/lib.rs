@@ -2,7 +2,9 @@ use anchor_lang::prelude::*;
 
 pub mod error;
 pub mod instructions;
+pub mod introspection;
 pub mod multiplier;
+pub mod schedule_math;
 pub mod state;
 
 use instructions::*;
@@ -52,5 +54,35 @@ pub mod paritas {
 
     pub fn withdraw(ctx: Context<Withdraw>, receipt_amount: u64) -> Result<()> {
         instructions::withdraw(ctx, receipt_amount)
+    }
+
+    pub fn create_schedule(
+        ctx: Context<CreateSchedule>,
+        schedule_index: u8,
+        amount_usdc: u64,
+        cadence_seconds: i64,
+        first_run_ts: i64,
+        min_equity_units: u64,
+    ) -> Result<()> {
+        instructions::create_schedule(
+            ctx,
+            schedule_index,
+            amount_usdc,
+            cadence_seconds,
+            first_run_ts,
+            min_equity_units,
+        )
+    }
+
+    pub fn cancel_schedule(ctx: Context<CancelSchedule>) -> Result<()> {
+        instructions::cancel_schedule(ctx)
+    }
+
+    pub fn begin_execution(ctx: Context<BeginExecution>) -> Result<()> {
+        instructions::begin_execution(ctx)
+    }
+
+    pub fn settle_execution(ctx: Context<SettleExecution>, min_equity_units: u64) -> Result<()> {
+        instructions::settle_execution(ctx, min_equity_units)
     }
 }
