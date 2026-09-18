@@ -39,8 +39,10 @@ import {
 } from "@solana/spl-token";
 import {
   REPO_ROOT,
+  MAX_KEEPER_FEE_BPS,
   currentMultiplierFixed,
   formatAmount,
+  keeperFee,
   loadAddressBook,
   toEquityUnits,
   withRetry,
@@ -499,19 +501,25 @@ async function main(): Promise<void> {
   // executions make several CPIs, so the default budget is not enough. A
   // ComputeBudget instruction is not a paritas instruction, so the scan
   // ignores it.
-  const execution = new Transaction().add(
+  const instructions = [
     ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
     beginIx,
     swapSubstituteIx,
-    settleIx
-  );
+    settleIx,
+  ];
+  const beginIndex = instructions.indexOf(beginIx);
+  const settleIndex = instructions.indexOf(settleIx);
+
+  const execution = new Transaction().add(...instructions);
   execution.feePayer = keeper.publicKey;
 
   console.log("  [0] compute budget");
-  console.log("  [1] begin_execution   pulls the buy from the delegation");
+  console.log(
+    `  [${beginIndex}] begin_execution   pulls the buy, withholds the fee`
+  );
   console.log("  [2] transfer          DEVNET SUBSTITUTE for a Jupiter route");
   console.log(
-    "  [3] settle_execution  verifies, credits the owner, pays the keeper"
+    `  [${settleIndex}] settle_execution  verifies, credits the owner, pays the fee`
   );
 
   const signature = await send(connection, "execution", execution, [keeper]);
@@ -528,6 +536,61 @@ async function main(): Promise<void> {
     vaultWrapper: await tokenBalance(connection, vaultWrapperAccount),
   };
 
+  const sharesCredited = after.ownerShares - before.ownerShares;
+  const usdcSpent = before.ownerUsdc - after.ownerUsdc;
+  const keeperNetUsdc = after.keeperUsdc - before.keeperUsdc;
+  const d = book.payment.decimals;
+  const r = book.vault.receiptDecimals;
+
+  // The keeper's USDC balance moves twice in this transaction and the two
+  // movements mean completely different things: begin_execution hands over the
+  // swap funding, settle_execution pays the fee. A before and after delta
+  // conflates them into one number and makes a 5 USDC buy look like a 5 USDC
+  // fee. Recover the two legs from the transaction itself instead, so what is
+  // reported is what the chain did rather than what the net happens to be.
+  const parsed = await withRetry("fetch the execution transaction", () =>
+    connection.getParsedTransaction(signature, {
+      maxSupportedTransactionVersion: 0,
+      // The Anchor provider's connection defaults to `processed`, and this
+      // method will not serve anything below `confirmed`.
+      commitment: "confirmed",
+    })
+  );
+  if (!parsed?.meta?.innerInstructions) {
+    throw new Error("could not read the execution transaction back");
+  }
+
+  function usdcLegsOf(outerIndex: number): bigint[] {
+    const legs: bigint[] = [];
+    for (const inner of parsed!.meta!.innerInstructions!) {
+      if (inner.index !== outerIndex) {
+        continue;
+      }
+      for (const ix of inner.instructions) {
+        const parsedIx = (ix as any).parsed;
+        if (
+          parsedIx?.type === "transferChecked" &&
+          parsedIx.info?.mint === book.payment.mint
+        ) {
+          legs.push(BigInt(parsedIx.info.tokenAmount.amount));
+        }
+      }
+    }
+    return legs;
+  }
+
+  const beginLegs = usdcLegsOf(beginIndex);
+  const settleLegs = usdcLegsOf(settleIndex);
+  const swapFunding = beginLegs.reduce((a, b) => a + b, 0n);
+  const feePaid = settleLegs.reduce((a, b) => a + b, 0n);
+
+  const expectedFee = keeperFee(
+    AMOUNT_USDC,
+    BigInt(book.vault.keeperFeeBps),
+    BigInt(book.vault.keeperFeeMin)
+  );
+  const feeCeiling = (AMOUNT_USDC * MAX_KEEPER_FEE_BPS) / 10_000n;
+
   const schedule = (await withRetry("fetch schedule", () =>
     (program.account as any).schedule.fetch(schedulePda)
   )) as {
@@ -539,42 +602,71 @@ async function main(): Promise<void> {
     totalEquityUnits: BN;
   };
 
-  const sharesCredited = after.ownerShares - before.ownerShares;
-  const usdcSpent = before.ownerUsdc - after.ownerUsdc;
-  const keeperGained = after.keeperUsdc - before.keeperUsdc;
-  const d = book.payment.decimals;
-  const r = book.vault.receiptDecimals;
-
-  console.log(`  owner paid     ${formatAmount(usdcSpent, d)} USDC`);
+  console.log(`  owner paid       ${formatAmount(usdcSpent, d)} USDC`);
   console.log(
-    `  owner received ${formatAmount(sharesCredited, r)} shares of ${
+    `  owner received   ${formatAmount(sharesCredited, r)} shares of ${
       book.vault.symbol
     }`
   );
-  console.log(`  keeper earned  ${formatAmount(keeperGained, d)} USDC`);
+  console.log();
+  console.log("  where the owner's USDC went:");
   console.log(
-    `  keeper gave up ${formatAmount(
-      before.keeperWrapper - after.keeperWrapper,
-      wrapper.decimals
-    )} ${wrapper.label}`
+    `    swap funding   ${formatAmount(
+      swapFunding,
+      d
+    )} USDC to the keeper to buy with`
   );
   console.log(
-    `  vault holds    ${formatAmount(after.vaultWrapper, wrapper.decimals)} ${
+    `    keeper fee     ${formatAmount(
+      feePaid,
+      d
+    )} USDC, the keeper's actual earnings`
+  );
+  console.log(
+    `                   (${book.vault.keeperFeeBps} bps would be ${formatAmount(
+      (AMOUNT_USDC * BigInt(book.vault.keeperFeeBps)) / 10_000n,
+      d
+    )}, ` +
+      `minimum is ${formatAmount(BigInt(book.vault.keeperFeeMin), d)}, ` +
+      `cap is ${formatAmount(feeCeiling, d)})`
+  );
+  console.log();
+  console.log(
+    `  keeper net USDC  ${formatAmount(
+      keeperNetUsdc,
+      d
+    )} (fee plus the unspent swap funding)`
+  );
+  console.log(
+    `  keeper gave up   ${formatAmount(
+      before.keeperWrapper - after.keeperWrapper,
+      wrapper.decimals
+    )} ${wrapper.label} from inventory`
+  );
+  console.log(
+    "                   On mainnet the funding would have been spent at Jupiter"
+  );
+  console.log(
+    "                   instead; the devnet substitute delivers from inventory,"
+  );
+  console.log("                   so the keeper keeps it and gives up shares.");
+  console.log();
+  console.log(
+    `  vault holds      ${formatAmount(after.vaultWrapper, wrapper.decimals)} ${
       wrapper.label
     } (up ${formatAmount(
       after.vaultWrapper - before.vaultWrapper,
       wrapper.decimals
     )})`
   );
-  console.log();
-  console.log(`  executions     ${schedule.executions.toString()}`);
+  console.log(`  executions       ${schedule.executions.toString()}`);
   console.log(
-    `  next due       ${new Date(
+    `  next due         ${new Date(
       schedule.nextDueTs.toNumber() * 1000
     ).toISOString()}`
   );
   console.log(
-    `  floor ratchet  ${formatAmount(
+    `  floor ratchet    ${formatAmount(
       BigInt(schedule.initialMinEquityUnits.toString()),
       r
     )} -> ${formatAmount(BigInt(schedule.minEquityUnits.toString()), r)}`
@@ -589,11 +681,38 @@ async function main(): Promise<void> {
   if (usdcSpent !== AMOUNT_USDC) {
     failures.push(`owner paid ${usdcSpent}, expected ${AMOUNT_USDC}`);
   }
-  if (keeperGained !== AMOUNT_USDC) {
+
+  // The fee checks, read off the chain rather than off a balance delta.
+  if (feePaid !== expectedFee) {
     failures.push(
-      `keeper received ${keeperGained} USDC, expected the full ${AMOUNT_USDC} (it delivered the shares in exchange)`
+      `settle_execution paid a fee of ${feePaid}, expected ${expectedFee}`
     );
   }
+  if (feePaid > feeCeiling) {
+    failures.push(
+      `fee ${feePaid} exceeds MAX_KEEPER_FEE_BPS of the buy (${feeCeiling})`
+    );
+  }
+  if (swapFunding !== AMOUNT_USDC - expectedFee) {
+    failures.push(
+      `begin_execution moved ${swapFunding} as swap funding, expected ${
+        AMOUNT_USDC - expectedFee
+      }`
+    );
+  }
+  if (swapFunding + feePaid !== AMOUNT_USDC) {
+    failures.push(
+      `the two legs sum to ${
+        swapFunding + feePaid
+      }, not the ${AMOUNT_USDC} debited`
+    );
+  }
+  if (keeperNetUsdc !== AMOUNT_USDC) {
+    failures.push(
+      `keeper net USDC is ${keeperNetUsdc}; with the swap faked from inventory it should be the full ${AMOUNT_USDC}`
+    );
+  }
+
   if (after.vaultWrapper - before.vaultWrapper !== delivery) {
     failures.push("the vault did not receive the delivery");
   }

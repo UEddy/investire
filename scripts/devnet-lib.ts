@@ -305,6 +305,29 @@ export function toEquityUnits(
   return (rawAmount * rate) / RATE_SCALE;
 }
 
+/**
+ * Hard ceiling on one execution's keeper fee, in basis points of the buy.
+ * Mirrors state::MAX_KEEPER_FEE_BPS.
+ */
+export const MAX_KEEPER_FEE_BPS = 200n;
+
+/**
+ * Integer mirror of schedule_math::keeper_fee. The larger of the vault's basis
+ * points and its absolute minimum, then clamped to MAX_KEEPER_FEE_BPS of the
+ * buy so a vault authority cannot set a fee that drains the schedules trusting
+ * it.
+ */
+export function keeperFee(
+  amountUsdc: bigint,
+  feeBps: bigint,
+  feeMin: bigint
+): bigint {
+  const fromBps = (amountUsdc * feeBps) / 10_000n;
+  const ceiling = (amountUsdc * MAX_KEEPER_FEE_BPS) / 10_000n;
+  const larger = fromBps > feeMin ? fromBps : feeMin;
+  return larger < ceiling ? larger : ceiling;
+}
+
 /** Formats a raw token amount for human output. Display only. */
 export function formatAmount(raw: bigint, decimals: number): string {
   const negative = raw < 0n;
