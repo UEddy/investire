@@ -6,3 +6,6 @@ node_modules
 test-ledger
 .yarn
 .surfpool
+# Generated mint and keeper keypairs for the devnet demo. The public
+# addresses live in devnet.json, which is committed; the secrets do not.
+.devnet-keys

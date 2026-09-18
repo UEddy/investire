@@ -2,7 +2,9 @@
   "license": "ISC",
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
-    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
+    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
+    "devnet:setup": "ts-node --project tsconfig.scripts.json scripts/setup-devnet.ts",
+    "devnet:lifecycle": "ts-node --project tsconfig.scripts.json scripts/run-lifecycle.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

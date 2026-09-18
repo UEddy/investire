@@ -1,0 +1,71 @@
+{
+  "cluster": "devnet",
+  "generatedAt": "2026-09-18T10:44:01.085Z",
+  "rpcUrl": "https://api.devnet.solana.com",
+  "programId": "5QkWw7s4dQwAhNZQoKGDTrb6xqcZnMi8XPA7tAkD29LV",
+  "tokenProgram2022": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+  "tokenProgramClassic": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "payment": {
+    "label": "USDC",
+    "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    "decimals": 6,
+    "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+  },
+  "vault": {
+    "symbol": "NVDA",
+    "address": "8mnLotdw9eXnciucKw6puzJALPSHBz9kE32bdqpv9oML",
+    "receiptMint": "746EnykjM8jtT1ZxQTd8HsbMfbkLEYuyaM54RXrL4ojQ",
+    "receiptDecimals": 9,
+    "tokenProgram": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "authority": "4Uatg8BVpuVH3CW7GQ7ueek4ZDaCCZWH82mqCnuNkNqm",
+    "keeperFeeBps": 25,
+    "keeperFeeMin": "50000"
+  },
+  "wrappers": [
+    {
+      "label": "NVDAx",
+      "mint": "FWk32ZCua2ZKQoMhdDzH6hos3iNuuUwjKf9Xou4rQQHo",
+      "decimals": 8,
+      "wrapper": "3be4ryLCbheQs8V7EGNV7BecgGyESvy3sKYiCjDtB8tQ",
+      "vaultTokenAccount": "Gppx4P67YGgJqsi8pi2ABpFRc2ST1N7EeaYXQkVbwHKT",
+      "ownerTokenAccount": "6LabaQ8Ht7JB68nz5cYJmtVa2DMiQ4b1vLXNpidv4pT5",
+      "liveMultiplier": 1.001701196801074,
+      "mainnet": {
+        "mint": "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh",
+        "multiplier": 1.0009180758490996,
+        "newMultiplier": 1.001701196801074,
+        "newMultiplierEffectiveTimestamp": 1789000200,
+        "liveMultiplier": 1.001701196801074
+      }
+    },
+    {
+      "label": "NVDAon",
+      "mint": "EwFZ8cTZ8AUDQL9eJ3JWoh2py53WVewQtxAmopZhQua7",
+      "decimals": 9,
+      "wrapper": "PPqnM7RY1JjsYfnttuYpZ4km1fxLibpnTYmL5YkL8au",
+      "vaultTokenAccount": "BwFYguS1zjuVvHQeazuwm86s6EspuqqKVhQDKqDJugTN",
+      "ownerTokenAccount": "5rqx2w1YhAHcNzvrghb1ZfCNh3Wj3D7bcxjNMbfXovB",
+      "liveMultiplier": 1.0017152487959897,
+      "mainnet": {
+        "mint": "gEGtLTPNQ7jcg25zTetkbmF7teoDLcrfTnQfmn2ondo",
+        "multiplier": 1.0017152487959897,
+        "newMultiplier": 1.0017152487959897,
+        "newMultiplierEffectiveTimestamp": 1788998645,
+        "liveMultiplier": 1.0017152487959897
+      }
+    }
+  ],
+  "owner": {
+    "address": "4Uatg8BVpuVH3CW7GQ7ueek4ZDaCCZWH82mqCnuNkNqm",
+    "paymentAccount": "2i3DtQntkkRgqKRpNgLFgNqFzwXWshHW6tYPKwPCKezx",
+    "receiptAccount": "3NVVtCko5HxBJJrVtQ3BYTZDYymidstrNzhpWDcgRQ1K"
+  },
+  "seeds": {
+    "vault": "vault",
+    "receiptMint": "receipt",
+    "wrapper": "wrapper",
+    "schedule": "schedule",
+    "executionReceipt": "execution",
+    "executionEscrow": "escrow"
+  }
+}
