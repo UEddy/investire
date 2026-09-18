@@ -1,0 +1,77 @@
+# Investire keeper.
+#
+# Install to /etc/systemd/system/investire-keeper.service
+#
+# The service is stateless: it keeps nothing on disk, so it needs no writable
+# path anywhere on the system and a restart loses nothing. That is what lets
+# ProtectSystem=strict below stand with no ReadWritePaths exception at all,
+# and it is the same property that makes the keeper a convenience rather than
+# something the product depends on.
+
+[Unit]
+Description=Investire keeper: submits due recurring equity buys
+Documentation=https://github.com/UEddy/paritas
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=investire
+Group=investire
+WorkingDirectory=/opt/investire
+
+# Secrets and endpoints live here, not in the repo. Create it with mode 0600
+# owned by root; see keeper/README.md.
+EnvironmentFile=/etc/investire/keeper.env
+
+# 256MB heap on a 512MB droplet leaves room for the OS and for node's own
+# off-heap allocations.
+ExecStart=/usr/bin/node --max-old-space-size=256 dist/keeper/index.js
+
+# SIGTERM is what the keeper listens for. It finishes the schedule it is
+# working on and exits 0, so a normal stop is not counted as a failure.
+# 30 seconds is generous: the longest thing it can be doing is one
+# transaction confirmation.
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=30
+
+Restart=always
+RestartSec=10
+# Do not give up on a service whose usual failure is somebody else's RPC
+# being down.
+StartLimitIntervalSec=0
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=investire-keeper
+
+# Hardening. Nothing here is aspirational: the service reads two json files
+# and talks to one HTTPS endpoint.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+# Hard stop well under the droplet's 512MB, so a leak takes the keeper down
+# and not the box.
+MemoryMax=384M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

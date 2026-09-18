@@ -358,6 +358,12 @@ export interface RetryOptions {
   attempts?: number;
   /** True only if running this operation twice is indistinguishable from once. */
   idempotent?: boolean;
+  /**
+   * Where the retry notice goes. Defaults to console.log, which suits a
+   * script. A long running service passes its own logger so retries carry the
+   * same timestamp and level as every other line in the journal.
+   */
+  onRetry?: (message: string) => void;
 }
 
 export async function withRetry<T>(
@@ -392,7 +398,8 @@ export async function withRetry<T>(
         throw err;
       }
 
-      console.log(`  (retrying ${what}, attempt ${attempt + 1}/${attempts})`);
+      const notify = options.onRetry ?? ((m: string) => console.log(m));
+      notify(`retrying ${what}, attempt ${attempt + 1}/${attempts}`);
       await new Promise((resolve) => setTimeout(resolve, attempt * 1_000));
     }
   }

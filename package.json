@@ -4,7 +4,10 @@
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
     "devnet:setup": "ts-node --project tsconfig.scripts.json scripts/setup-devnet.ts",
-    "devnet:lifecycle": "ts-node --project tsconfig.scripts.json scripts/run-lifecycle.ts"
+    "devnet:lifecycle": "ts-node --project tsconfig.scripts.json scripts/run-lifecycle.ts",
+    "keeper:build": "tsc -p tsconfig.keeper.json",
+    "keeper:start": "node dist/keeper/index.js",
+    "keeper:dev": "ts-node --project tsconfig.scripts.json keeper/index.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
