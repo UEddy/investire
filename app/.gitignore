@@ -1,0 +1,8 @@
+node_modules
+.next
+out
+next-env.d.ts
+# Copied in by scripts/sync-config.mjs at predev and prebuild time. The
+# originals are devnet.json and target/idl/paritas.json at the repo root.
+src/config/devnet.json
+src/config/paritas-idl.json

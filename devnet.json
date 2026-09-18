@@ -1,6 +1,6 @@
 {
   "cluster": "devnet",
-  "generatedAt": "2026-09-18T10:44:01.085Z",
+  "generatedAt": "2026-09-18T11:22:01.312Z",
   "rpcUrl": "https://api.devnet.solana.com",
   "programId": "5QkWw7s4dQwAhNZQoKGDTrb6xqcZnMi8XPA7tAkD29LV",
   "tokenProgram2022": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
@@ -13,6 +13,7 @@
   },
   "vault": {
     "symbol": "NVDA",
+    "displayName": "NVIDIA",
     "address": "8mnLotdw9eXnciucKw6puzJALPSHBz9kE32bdqpv9oML",
     "receiptMint": "746EnykjM8jtT1ZxQTd8HsbMfbkLEYuyaM54RXrL4ojQ",
     "receiptDecimals": 9,

@@ -58,6 +58,14 @@ import {
 const VAULT_SYMBOL = "NVDA";
 
 /**
+ * What a person calls this thing. The vault symbol is a ticker for the
+ * underlying, but nobody saving five dollars a week thinks of themselves as
+ * buying NVDA, let alone NVDAx. It lives in the address book so the frontend
+ * carries no per asset knowledge and a new vault needs no frontend change.
+ */
+const VAULT_DISPLAY_NAME = "NVIDIA";
+
+/**
  * Keeper fee for the demo vault: a quarter of a percent, but never less than
  * five cents. The absolute floor is the part that matters at these sizes, a
  * quarter of a percent of a five dollar buy is about a cent, which does not
@@ -599,6 +607,7 @@ async function main(): Promise<void> {
     },
     vault: {
       symbol: VAULT_SYMBOL,
+      displayName: VAULT_DISPLAY_NAME,
       address: vaultPda.toBase58(),
       receiptMint: receiptMintPda.toBase58(),
       receiptDecimals: 9,

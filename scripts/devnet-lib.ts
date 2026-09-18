@@ -59,6 +59,8 @@ export interface AddressBook {
   };
   vault: {
     symbol: string;
+    /** Human name for the underlying, e.g. "NVIDIA". Display only. */
+    displayName: string;
     address: string;
     receiptMint: string;
     receiptDecimals: number;
