@@ -5,7 +5,7 @@ use anchor_spl::token_2022::{
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::error::ParitasError;
-use crate::schedule_math::{keeper_fee, next_due_after};
+use crate::schedule_math::{keeper_fee, next_due_after, ratcheted_floor};
 use crate::introspection::{scan_execution_transaction, INSTRUCTIONS_SYSVAR};
 use crate::multiplier;
 use crate::state::{
@@ -86,7 +86,11 @@ pub fn settle_execution(ctx: Context<SettleExecution>, min_equity_units: u64) ->
     // a second settle_execution against the same receipt would need a
     // next_due_ts this one has already moved.
     let amount_usdc = ctx.accounts.schedule.amount_usdc;
-    let fee = keeper_fee(amount_usdc)?;
+    let fee = keeper_fee(
+        amount_usdc,
+        ctx.accounts.vault.keeper_fee_bps,
+        ctx.accounts.vault.keeper_fee_min,
+    )?;
     let swap_amount = amount_usdc
         .checked_sub(fee)
         .ok_or(ParitasError::MathOverflow)?;
@@ -126,7 +130,10 @@ pub fn settle_execution(ctx: Context<SettleExecution>, min_equity_units: u64) ->
     let equity_units = multiplier::to_equity_units(received, wrapper_decimals, mult_fixed)?;
     require!(equity_units > 0, ParitasError::ZeroAmount);
 
-    // The owner's floor binds; the caller's argument can only raise it.
+    // The owner's floor binds; the caller's argument can only raise it. The
+    // stored floor is the ratcheted one, so what is being compared against is
+    // the previous execution's realised result less the tolerance, not a
+    // figure fixed months ago at a price that no longer exists.
     let floor = ctx
         .accounts
         .schedule
@@ -197,6 +204,12 @@ pub fn settle_execution(ctx: Context<SettleExecution>, min_equity_units: u64) ->
     // whatever allowance the owner had left standing in an afternoon.
     let schedule = &mut ctx.accounts.schedule;
     schedule.next_due_ts = next_due_after(schedule.next_due_ts, schedule.cadence_seconds, now)?;
+
+    // Ratchet the floor onto what this execution actually bought. This is the
+    // only writer of min_equity_units after creation, and it runs only once
+    // the delivery has already cleared the previous floor, so the floor can
+    // never be reset from a result that was itself rejected.
+    schedule.min_equity_units = ratcheted_floor(equity_units, schedule.floor_tolerance_bps)?;
 
     schedule.executions = schedule
         .executions

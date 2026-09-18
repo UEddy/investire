@@ -3,6 +3,7 @@ import { Program, BN } from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
 import {
   TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
   unpackMint,
   getScaledUiAmountConfig,
 } from "@solana/spl-token";
@@ -12,7 +13,9 @@ import { Paritas } from "../target/types/paritas";
 // Real mainnet mints from CONTEXT.md. Do not replace these with anything not
 // written there.
 const NVDAX_MINT = new PublicKey("Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh");
-const NVDAON_MINT = new PublicKey("gEGtLTPNQ7jcg25zTetkbmF7teoDLcrfTnQfmn2ondo");
+const NVDAON_MINT = new PublicKey(
+  "gEGtLTPNQ7jcg25zTetkbmF7teoDLcrfTnQfmn2ondo"
+);
 
 // Mirrors multiplier.rs exactly: MULTIPLIER_SCALE and RATE_SCALE must match
 // programs/paritas/src/multiplier.rs bit for bit, since this is used to
@@ -44,7 +47,7 @@ function currentMultiplierFixed(
   multiplier: number,
   newMultiplier: number,
   effectiveTimestamp: bigint,
-  now: bigint,
+  now: bigint
 ): bigint {
   const chosen = now >= effectiveTimestamp ? newMultiplier : multiplier;
   if (!Number.isFinite(chosen) || chosen <= 0) {
@@ -65,7 +68,7 @@ function computeRate(
   multAFixed: bigint,
   decimalsA: number,
   multBFixed: bigint,
-  decimalsB: number,
+  decimalsB: number
 ): bigint {
   if (multAFixed === 0n || multBFixed === 0n) {
     throw new Error("invalid multiplier");
@@ -79,6 +82,39 @@ function computeRate(
     denominator = multBFixed * pow10(BigInt(decimalsA - decimalsB));
   }
   return numerator / denominator;
+}
+
+/**
+ * Pulls the Anchor error code name out of whatever the client threw. Anchor
+ * surfaces custom program errors in a few shapes depending on whether the
+ * failure came from account constraint resolution or from the handler, so this
+ * checks the structured field first and falls back to the message.
+ */
+function errorCodeOf(err: unknown): string {
+  const anchorErr = err as { error?: { errorCode?: { code?: string } } };
+  const structured = anchorErr?.error?.errorCode?.code;
+  if (structured) {
+    return structured;
+  }
+  return String(err);
+}
+
+async function expectFailure(
+  promise: Promise<unknown>,
+  expectedCode: string,
+  what: string
+): Promise<void> {
+  try {
+    await promise;
+    assert.fail(`${what} was accepted, but it must be rejected`);
+  } catch (err) {
+    const code = errorCodeOf(err);
+    assert.include(
+      code,
+      expectedCode,
+      `${what} failed, but not for the expected reason (got: ${code})`
+    );
+  }
 }
 
 describe("paritas: surfpool mainnet fork", () => {
@@ -98,7 +134,7 @@ describe("paritas: surfpool mainnet fork", () => {
 
     const [pairPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("pair"), mintA.toBuffer(), mintB.toBuffer()],
-      program.programId,
+      program.programId
     );
 
     const authority = provider.wallet.publicKey;
@@ -148,20 +184,20 @@ describe("paritas: surfpool mainnet fork", () => {
       configA.multiplier,
       configA.newMultiplier,
       BigInt(configA.newMultiplierEffectiveTimestamp.toString()),
-      now,
+      now
     );
     const multB = currentMultiplierFixed(
       configB.multiplier,
       configB.newMultiplier,
       BigInt(configB.newMultiplierEffectiveTimestamp.toString()),
-      now,
+      now
     );
 
     const expectedRate = computeRate(
       multA,
       unpackedA.decimals,
       multB,
-      unpackedB.decimals,
+      unpackedB.decimals
     );
 
     const onChainRate: BN = await program.methods
@@ -174,11 +210,156 @@ describe("paritas: surfpool mainnet fork", () => {
       })
       .view();
 
-    console.log(`mint A (${mintA.toBase58()}) decimals=${unpackedA.decimals} multiplier=${configA.multiplier} newMultiplier=${configA.newMultiplier}`);
-    console.log(`mint B (${mintB.toBase58()}) decimals=${unpackedB.decimals} multiplier=${configB.multiplier} newMultiplier=${configB.newMultiplier}`);
+    console.log(
+      `mint A (${mintA.toBase58()}) decimals=${unpackedA.decimals} multiplier=${
+        configA.multiplier
+      } newMultiplier=${configA.newMultiplier}`
+    );
+    console.log(
+      `mint B (${mintB.toBase58()}) decimals=${unpackedB.decimals} multiplier=${
+        configB.multiplier
+      } newMultiplier=${configB.newMultiplier}`
+    );
     console.log(`get_rate() on-chain result:      ${onChainRate.toString()}`);
     console.log(`independently computed expected: ${expectedRate.toString()}`);
 
     assert.strictEqual(onChainRate.toString(), expectedRate.toString());
+  });
+  it("refuses a Token-2022 wrapper on a vault created under the classic SPL Token program", async () => {
+    // init_vault records whichever token program created the receipt mint.
+    // deposit, withdraw and settle_execution each take one token program
+    // account and use it for the wrapper leg and the receipt leg alike, so a
+    // vault that mixes the two cannot be transacted at all. add_wrapper is the
+    // only place the mismatch can be introduced, so it is the place to reject
+    // it.
+    const symbol = `MIX${Date.now() % 100000}`;
+    const authority = provider.wallet.publicKey;
+
+    const [vaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), Buffer.from(symbol)],
+      program.programId
+    );
+    const [receiptMintPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("receipt"), vaultPda.toBuffer()],
+      program.programId
+    );
+
+    // A classic SPL Token vault: its receipt mint is owned by Tokenkeg.
+    await program.methods
+      .initVault(symbol, authority, 25, new BN(0))
+      .accounts({
+        payer: provider.wallet.publicKey,
+        vault: vaultPda,
+        receiptMint: receiptMintPda,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    const vault = await program.account.vault.fetch(vaultPda);
+    assert.strictEqual(
+      vault.tokenProgram.toBase58(),
+      TOKEN_PROGRAM_ID.toBase58(),
+      "the vault must record the program that created its receipt mint"
+    );
+
+    const [wrapperPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("wrapper"), vaultPda.toBuffer(), NVDAX_MINT.toBuffer()],
+      program.programId
+    );
+
+    // NVDAx is a Token-2022 mint. Naming the vault's own program leaves the
+    // mint owned by the other one, so the owner constraint rejects it.
+    //
+    // The assertion is on the specific code, not just on failure. NVDAx does
+    // carry a ScaledUiAmountConfig, so this cannot be passing by accident on
+    // the missing extension check, and the ordering matters: a mismatch that
+    // surfaced as MissingScaledUiAmountExtension would send an operator
+    // looking for a problem with the mint rather than with the vault.
+    await expectFailure(
+      program.methods
+        .addWrapper()
+        .accounts({
+          payer: provider.wallet.publicKey,
+          vault: vaultPda,
+          authority,
+          mint: NVDAX_MINT,
+          wrapper: wrapperPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .rpc(),
+      "TokenProgramMismatch",
+      "adding a Token-2022 wrapper to a classic SPL Token vault"
+    );
+
+    // Naming the mint's own program instead does not get around it either:
+    // the token program account is pinned to the one the vault stored.
+    await expectFailure(
+      program.methods
+        .addWrapper()
+        .accounts({
+          payer: provider.wallet.publicKey,
+          vault: vaultPda,
+          authority,
+          mint: NVDAX_MINT,
+          wrapper: wrapperPda,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .rpc(),
+      "TokenProgramMismatch",
+      "adding a Token-2022 wrapper while naming the Token-2022 program"
+    );
+  });
+
+  it("accepts the same wrapper on a vault created under Token-2022", async () => {
+    // The control for the test above. Same mint, same call, only the vault's
+    // token program differs, so a failure here would mean the rejection above
+    // proves nothing.
+    const symbol = `T22${Date.now() % 100000}`;
+    const authority = provider.wallet.publicKey;
+
+    const [vaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), Buffer.from(symbol)],
+      program.programId
+    );
+    const [receiptMintPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("receipt"), vaultPda.toBuffer()],
+      program.programId
+    );
+
+    await program.methods
+      .initVault(symbol, authority, 25, new BN(0))
+      .accounts({
+        payer: provider.wallet.publicKey,
+        vault: vaultPda,
+        receiptMint: receiptMintPda,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    const [wrapperPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("wrapper"), vaultPda.toBuffer(), NVDAX_MINT.toBuffer()],
+      program.programId
+    );
+
+    await program.methods
+      .addWrapper()
+      .accounts({
+        payer: provider.wallet.publicKey,
+        vault: vaultPda,
+        authority,
+        mint: NVDAX_MINT,
+        wrapper: wrapperPda,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    const wrapper = await program.account.wrapper.fetch(wrapperPda);
+    assert.strictEqual(wrapper.mint.toBase58(), NVDAX_MINT.toBase58());
+    assert.strictEqual(wrapper.decimals, 8); // NVDAx, per CONTEXT.md
   });
 });

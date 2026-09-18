@@ -70,4 +70,10 @@ pub enum ParitasError {
     NothingReceived,
     #[msg("equity units received are below the required minimum")]
     MinEquityUnitsNotMet,
+    #[msg("mint is not owned by the token program this vault was created under")]
+    TokenProgramMismatch,
+    #[msg("floor tolerance exceeds the maximum allowed basis points")]
+    FloorToleranceTooWide,
+    #[msg("schedule amount is too small to pay this vault's minimum keeper fee")]
+    AmountCannotCoverKeeperFee,
 }

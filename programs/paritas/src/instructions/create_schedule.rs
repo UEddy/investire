@@ -2,7 +2,10 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::error::ParitasError;
-use crate::state::{Schedule, Vault, MIN_CADENCE_SECONDS, SCHEDULE_SEED, VAULT_SEED};
+use crate::state::{
+    Schedule, Vault, MAX_FLOOR_TOLERANCE_BPS, MAX_KEEPER_FEE_BPS, MIN_CADENCE_SECONDS,
+    SCHEDULE_SEED, VAULT_SEED,
+};
 
 /// Creates a recurring buy. The owner signs, and everything an untrusted
 /// caller could otherwise choose later is pinned here, while the owner is the
@@ -15,6 +18,12 @@ use crate::state::{Schedule, Vault, MIN_CADENCE_SECONDS, SCHEDULE_SEED, VAULT_SE
 /// exposure by choosing how much to delegate, and revokes to stop it dead
 /// without needing this program's cooperation.
 ///
+/// min_equity_units is the starting floor only. Each execution resets the live
+/// floor to what it actually delivered, less floor_tolerance_bps, so the plan
+/// does not quietly stop the first time the underlying has risen enough that
+/// the owner's original figure is no longer reachable. The owner's value is
+/// kept alongside as initial_min_equity_units so the drift stays visible.
+///
 /// first_run_ts is not bounded. A timestamp in the past just means the first
 /// run is due immediately, which is the owner's call to make, and
 /// settle_execution's advance clamps next_due_ts forward so a long backdated
@@ -26,10 +35,15 @@ pub fn create_schedule(
     cadence_seconds: i64,
     first_run_ts: i64,
     min_equity_units: u64,
+    floor_tolerance_bps: u16,
 ) -> Result<()> {
     require!(
         cadence_seconds >= MIN_CADENCE_SECONDS,
         ParitasError::CadenceTooShort
+    );
+    require!(
+        floor_tolerance_bps <= MAX_FLOOR_TOLERANCE_BPS,
+        ParitasError::FloorToleranceTooWide
     );
 
     // The dust floor is one whole unit of the payment mint, read from the
@@ -44,6 +58,20 @@ pub fn create_schedule(
         ParitasError::AmountBelowDustFloor
     );
 
+    // A buy too small to pay this vault's minimum keeper fee is one no keeper
+    // will ever run, since the fee is capped at MAX_KEEPER_FEE_BPS of the
+    // amount however the vault is configured. Better to say so while the owner
+    // is still here than to create a schedule that silently never executes.
+    let max_payable_fee = (amount_usdc as u128)
+        .checked_mul(MAX_KEEPER_FEE_BPS as u128)
+        .ok_or(ParitasError::MathOverflow)?
+        .checked_div(10_000)
+        .ok_or(ParitasError::MathOverflow)?;
+    require!(
+        max_payable_fee >= ctx.accounts.vault.keeper_fee_min as u128,
+        ParitasError::AmountCannotCoverKeeperFee
+    );
+
     let schedule = &mut ctx.accounts.schedule;
     schedule.owner = ctx.accounts.owner.key();
     schedule.vault = ctx.accounts.vault.key();
@@ -54,6 +82,8 @@ pub fn create_schedule(
     schedule.cadence_seconds = cadence_seconds;
     schedule.next_due_ts = first_run_ts;
     schedule.min_equity_units = min_equity_units;
+    schedule.initial_min_equity_units = min_equity_units;
+    schedule.floor_tolerance_bps = floor_tolerance_bps;
     schedule.executions = 0;
     schedule.total_usdc_spent = 0;
     schedule.total_equity_units = 0;

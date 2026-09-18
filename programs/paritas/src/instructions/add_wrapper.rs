@@ -16,6 +16,16 @@ use crate::state::{Vault, Wrapper, WRAPPER_SEED};
 ///
 /// Rejects the mint outright if it has no ScaledUiAmountConfig extension,
 /// since deposit and withdraw have no other way to value it.
+///
+/// Also rejects a mint owned by a different token program than the one the
+/// vault was created under. This is the only place that mismatch can enter:
+/// init_vault records the program that created the receipt mint, and every
+/// instruction that moves tokens takes a single token program account for both
+/// the wrapper leg and the receipt leg. A vault holding Token-2022 wrappers
+/// against a classic SPL receipt mint would be uninspectable and untransactable
+/// rather than merely inconvenient, and the failure would surface at the first
+/// deposit, long after the wrapper was accepted. The account constraints reject
+/// it here, before the handler runs at all.
 pub fn add_wrapper(ctx: Context<AddWrapper>) -> Result<()> {
     let mint_data = ctx.accounts.mint.to_account_info();
     let mint_data = mint_data.try_borrow_data()?;
@@ -39,6 +49,11 @@ pub struct AddWrapper<'info> {
     pub vault: Account<'info, Vault>,
     pub authority: Signer<'info>,
 
+    /// Must be owned by the vault's own token program. The owner constraint
+    /// runs before the handler, so a mismatched mint is rejected on the token
+    /// program rather than falling through to the missing extension check,
+    /// which is a different problem with a different fix.
+    #[account(owner = token_program.key() @ ParitasError::TokenProgramMismatch)]
     pub mint: InterfaceAccount<'info, Mint>,
 
     #[account(
@@ -50,6 +65,7 @@ pub struct AddWrapper<'info> {
     )]
     pub wrapper: Account<'info, Wrapper>,
 
+    #[account(address = vault.token_program @ ParitasError::TokenProgramMismatch)]
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }

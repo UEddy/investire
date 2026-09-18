@@ -40,8 +40,22 @@ pub mod paritas {
         instructions::remove_liquidity(ctx, amount)
     }
 
-    pub fn init_vault(ctx: Context<InitVault>, symbol: String, authority: Pubkey) -> Result<()> {
-        instructions::init_vault(ctx, symbol, authority)
+    pub fn init_vault(
+        ctx: Context<InitVault>,
+        symbol: String,
+        authority: Pubkey,
+        keeper_fee_bps: u16,
+        keeper_fee_min: u64,
+    ) -> Result<()> {
+        instructions::init_vault(ctx, symbol, authority, keeper_fee_bps, keeper_fee_min)
+    }
+
+    pub fn set_keeper_fee(
+        ctx: Context<SetKeeperFee>,
+        keeper_fee_bps: u16,
+        keeper_fee_min: u64,
+    ) -> Result<()> {
+        instructions::set_keeper_fee(ctx, keeper_fee_bps, keeper_fee_min)
     }
 
     pub fn add_wrapper(ctx: Context<AddWrapper>) -> Result<()> {
@@ -63,6 +77,7 @@ pub mod paritas {
         cadence_seconds: i64,
         first_run_ts: i64,
         min_equity_units: u64,
+        floor_tolerance_bps: u16,
     ) -> Result<()> {
         instructions::create_schedule(
             ctx,
@@ -71,6 +86,7 @@ pub mod paritas {
             cadence_seconds,
             first_run_ts,
             min_equity_units,
+            floor_tolerance_bps,
         )
     }
 

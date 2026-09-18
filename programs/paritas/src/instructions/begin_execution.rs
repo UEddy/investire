@@ -57,7 +57,12 @@ pub fn begin_execution(ctx: Context<BeginExecution>) -> Result<()> {
         ParitasError::BeginNotTopLevel
     );
 
-    let fee = keeper_fee(schedule.amount_usdc)?;
+    let vault = &ctx.accounts.vault;
+    let fee = keeper_fee(
+        schedule.amount_usdc,
+        vault.keeper_fee_bps,
+        vault.keeper_fee_min,
+    )?;
     let swap_amount = schedule
         .amount_usdc
         .checked_sub(fee)
@@ -206,4 +211,65 @@ pub struct BeginExecution<'info> {
     /// Token program of the payment mint, which need not be the same one.
     pub payment_token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
+}
+
+#[cfg(test)]
+mod tests {
+    use anchor_lang::prelude::Pubkey;
+    use anchor_spl::token_2022::spl_token_2022;
+
+    /// An execution straddles two token programs: the payment mint is USDC,
+    /// owned by the classic SPL Token program, while the wrappers and the
+    /// receipt mint are Token-2022. begin_execution and settle_execution take
+    /// the two as separate accounts and build each CPI against the right one.
+    ///
+    /// That only works because anchor_spl's token_2022 helpers forward the
+    /// program account they are handed into the instruction builder, and the
+    /// builder validates it with check_spl_token_program_account, which
+    /// accepts either program. Both halves of that are in dependencies, and a
+    /// version bump that tightened the check to Token-2022 only would break
+    /// the payment leg at runtime on devnet with nothing failing to compile.
+    /// These two assertions turn that into a failing test instead.
+    #[test]
+    fn the_payment_leg_builds_against_the_classic_token_program() {
+        let ix = spl_token_2022::instruction::transfer_checked(
+            &anchor_spl::token::ID,
+            &Pubkey::new_unique(),
+            &Pubkey::new_unique(),
+            &Pubkey::new_unique(),
+            &Pubkey::new_unique(),
+            &[],
+            5_000_000,
+            6,
+        )
+        .expect("classic SPL Token must be accepted for the USDC leg");
+
+        assert_eq!(
+            ix.program_id.to_bytes(),
+            anchor_spl::token::ID.to_bytes(),
+            "the instruction must be addressed to the program it was built for"
+        );
+    }
+
+    #[test]
+    fn the_wrapper_leg_builds_against_token_2022() {
+        let ix = spl_token_2022::instruction::transfer_checked(
+            &spl_token_2022::ID,
+            &Pubkey::new_unique(),
+            &Pubkey::new_unique(),
+            &Pubkey::new_unique(),
+            &Pubkey::new_unique(),
+            &[],
+            100_000_000,
+            8,
+        )
+        .expect("Token-2022 must be accepted for the wrapper leg");
+
+        assert_eq!(ix.program_id.to_bytes(), spl_token_2022::ID.to_bytes());
+        assert_ne!(
+            spl_token_2022::ID.to_bytes(),
+            anchor_spl::token::ID.to_bytes(),
+            "the two legs must be distinct programs, or this all collapses"
+        );
+    }
 }
