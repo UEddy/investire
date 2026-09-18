@@ -59,3 +59,16 @@ devnet: PASTE_DEVNET_USDC_MINT_HERE
 
 NOTE: USDC is classic SPL. The xStock and Ondo wrappers are Token-2022.
 Every transaction touching both legs needs two distinct token programs.
+
+## USDC
+mainnet: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+  verified on-chain: owner TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+  (classic SPL Token, not Token-2022), 82 byte mint, no extensions.
+devnet: 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+  from faucet.circle.com
+
+NOTE: USDC is classic SPL. The xStock and Ondo wrappers are Token-2022.
+Every transaction touching both legs needs two distinct token programs.
+Devnet has no real xStock or Ondo mints. The devnet demo needs mock
+Token-2022 mints with a ScaledUiAmountConfig set to the real multiplier
+values above, or a Surfpool mainnet fork.
