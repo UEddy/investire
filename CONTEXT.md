@@ -38,7 +38,7 @@ NOTE: no permanentDelegate on this mint, unlike NVDAx.
 ## The thesis
 Both tokens represent one share of NVIDIA. Their multipliers differ
 (1.001701196801074 vs 1.0017152487959897), so one raw unit of NVDAon carries
-about 1.40 basis points more economic value than one raw unit of NVDAx.
+about 0.140 basis points more economic value than one raw unit of NVDAx.
 Decimals also differ (8 vs 9). Any swap treating them as 1:1 is wrong.
 
 ## Critical implementation detail

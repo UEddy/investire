@@ -1,6 +1,6 @@
-# Paritas
+# Paritas (superseded — see SPEC.md)
 
-**One share of NVIDIA is worth 1.40 basis points more depending on who wrapped it.**
+The correctness layer. Product framing moved to the savings app.
 
 NVDAx and NVDAon both represent a single NVIDIA share on Solana. Both reinvest
 dividends by adjusting a multiplier stored in their Token-2022 mint account.
