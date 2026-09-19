@@ -42,6 +42,67 @@ export type Prices =
 
 const PRICE_REFRESH_MS = 60_000;
 
+/** What cashing out a number of shares would pay, or why it cannot. */
+export type CashOutQuote =
+  | { kind: "ok"; sharesSold: bigint; paymentOut: bigint }
+  | { kind: "short"; available: bigint }
+  | { kind: "unavailable" };
+
+/** The price moved between the quote on screen and the transaction built. */
+class CashOutMovedError extends Error {
+  constructor() {
+    super("the cash out quote changed before signing");
+    this.name = "CashOutMovedError";
+  }
+}
+
+async function requestCashOut(
+  owner: PublicKey,
+  asset: VaultEntry,
+  shares: bigint,
+  mode: "quote" | "build",
+): Promise<Record<string, string | number>> {
+  const response = await fetch("/api/cash-out", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      owner: owner.toBase58(),
+      asset: asset.symbol,
+      shares: shares.toString(),
+      mode,
+    }),
+  });
+  return { status: response.status, ...(await response.json().catch(() => ({}))) };
+}
+
+/**
+ * The route's answer as a quote. Short answers carry the most that would
+ * work, from whichever limit bit: the fullest wrapper in the vault, or on
+ * devnet the liquidity standing in for the market.
+ */
+export async function quoteCashOut(
+  owner: PublicKey,
+  asset: VaultEntry,
+  shares: bigint,
+): Promise<CashOutQuote> {
+  try {
+    const body = await requestCashOut(owner, asset, shares, "quote");
+    if (body.status === 200) {
+      return {
+        kind: "ok",
+        sharesSold: BigInt(body.sharesSold as string),
+        paymentOut: BigInt(body.paymentOut as string),
+      };
+    }
+    if (body.error === "vault-short" || body.error === "liquidity-short") {
+      return { kind: "short", available: BigInt(body.available as string) };
+    }
+    return { kind: "unavailable" };
+  } catch {
+    return { kind: "unavailable" };
+  }
+}
+
 export interface SavingsState {
   loading: boolean;
   plans: Plan[];
@@ -77,6 +138,12 @@ export interface SavingsState {
     cadenceSeconds: number,
   ) => Promise<boolean>;
   withdraw: (asset: VaultEntry, shares: bigint) => Promise<boolean>;
+  /**
+   * Sells shares for dollars in one transaction. Refuses, with a sentence, if
+   * the transaction built would pay less than `expected`, the figure the
+   * saver agreed to on screen.
+   */
+  cashOut: (asset: VaultEntry, shares: bigint, expected: bigint) => Promise<boolean>;
   cancelPlan: (plan: Plan) => Promise<boolean>;
   resumePlan: (plan: Plan) => Promise<boolean>;
   clearError: () => void;
@@ -195,6 +262,7 @@ export function useSavings(): SavingsState {
   const run = useCallback(
     async (
       build: (program: ReturnType<typeof getProgram>, owner: PublicKey) => Promise<Transaction>,
+      options: { cosigned?: boolean } = {},
     ): Promise<boolean> => {
       if (!owner || !wallet.sendTransaction) {
         return false;
@@ -207,7 +275,19 @@ export function useSavings(): SavingsState {
           wallet as unknown as AnchorProvider["wallet"],
         );
         const transaction = await build(program, owner);
-        const signature = await wallet.sendTransaction(transaction, connection);
+        let signature: string;
+        if (options.cosigned) {
+          // Already carries another signature. signTransaction adds the
+          // saver's beside it; sendTransaction may rebuild the message on
+          // some adapters, which would void the one already there.
+          if (!wallet.signTransaction) {
+            throw new Error("wallet cannot sign without sending");
+          }
+          const signed = await wallet.signTransaction(transaction);
+          signature = await connection.sendRawTransaction(signed.serialize());
+        } else {
+          signature = await wallet.sendTransaction(transaction, connection);
+        }
         await confirmSignature(connection, signature);
         await refresh();
         return true;
@@ -296,6 +376,29 @@ export function useSavings(): SavingsState {
     [run],
   );
 
+  const cashOut = useCallback(
+    (asset: VaultEntry, shares: bigint, expected: bigint) =>
+      run(
+        async (_program, owner) => {
+          const body = await requestCashOut(owner, asset, shares, "build");
+          if (body.status !== 200) {
+            if (body.error === "vault-short" || body.error === "liquidity-short") {
+              throw new PayoutShortError(BigInt(body.available as string));
+            }
+            throw new Error(`cash out ${body.error ?? body.status}`);
+          }
+          if (BigInt(body.paymentOut as string) < expected) {
+            throw new CashOutMovedError();
+          }
+          return Transaction.from(
+            Uint8Array.from(atob(body.transaction as string), (c) => c.charCodeAt(0)),
+          );
+        },
+        { cosigned: true },
+      ),
+    [run],
+  );
+
   const clearError = useCallback(() => setError(null), []);
 
   const activePlan = plans.find((plan) => plan.active) ?? null;
@@ -312,6 +415,7 @@ export function useSavings(): SavingsState {
     executions,
     changePlan,
     withdraw,
+    cashOut,
     clearError,
     resumePlan,
     loading,
@@ -332,6 +436,9 @@ export function useSavings(): SavingsState {
  * prompt, or whose connection dropped, should not be shown a stack trace.
  */
 function friendly(err: unknown): string {
+  if (err instanceof CashOutMovedError) {
+    return "The price changed a moment ago. Check the new amount and try again.";
+  }
   if (err instanceof PayoutShortError) {
     if (err.available === 0n) {
       return "That is too small to take out. Try a larger amount.";
@@ -381,6 +488,8 @@ const PROGRAM_ERROR_COPY: Record<string, string> = {
   InsufficientVaultBalance:
     "That can't be paid out in full right now. Try a smaller amount.",
   ZeroAmount: "That is too small to take out. Try a larger amount.",
+  CashOutBelowMinimum:
+    "The sale came in under the amount you agreed to, so nothing happened. Try again.",
   Unauthorized: "That plan belongs to a different account.",
 };
 

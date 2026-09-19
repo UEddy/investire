@@ -10,6 +10,7 @@ import { AnchorProvider, BN, Idl, Program } from "@coral-xyz/anchor";
 import {
   Connection,
   PublicKey,
+  SYSVAR_INSTRUCTIONS_PUBKEY,
   SystemProgram,
   Transaction,
   TransactionInstruction,
@@ -20,6 +21,7 @@ import {
   createApproveCheckedInstruction,
   createAssociatedTokenAccountIdempotentInstruction,
   createRevokeInstruction,
+  createTransferCheckedInstruction,
   getAccount,
   getAssociatedTokenAddressSync,
   getMint,
@@ -1053,4 +1055,211 @@ export async function loadExecutions(
       }),
   );
   return perPlan.flat().sort((a, b) => b.ts - a.ts);
+}
+
+// --- cashing out ------------------------------------------------------------
+
+const CASH_OUT_SEED = book.seeds.cashOut ?? "cash_out";
+const CASH_OUT_ESCROW_SEED = book.seeds.cashOutEscrow ?? "cash_out_escrow";
+
+/**
+ * A cash out sells through one wrapper, not a split. The program allows one
+ * begin_cash_out per transaction, the same one-pair rule that keeps the buy
+ * verifiable, so the most one cash out can sell is what the single fullest
+ * wrapper can pay. "short" carries that most.
+ */
+export function planSingleWrapper(shares: bigint, sources: PayoutSource[]): Payout {
+  let best: { source: PayoutSource; capacity: bigint } | null = null;
+  for (const source of sources) {
+    const capacity = toEquityUnits(
+      source.vaultBalance,
+      source.wrapper.decimals,
+      source.multFixed,
+    );
+    if (!best || capacity > best.capacity) {
+      best = { source, capacity };
+    }
+  }
+  if (!best || best.capacity < shares) {
+    return { kind: "short", available: best?.capacity ?? 0n };
+  }
+  const rawOut = fromEquityUnits(shares, best.source.wrapper.decimals, best.source.multFixed);
+  if (rawOut === 0n) {
+    return { kind: "short", available: 0n };
+  }
+  return {
+    kind: "ok",
+    legs: [{ source: best.source, shares, rawOut }],
+    received: toEquityUnits(rawOut, best.source.wrapper.decimals, best.source.multFixed),
+  };
+}
+
+export interface CashOutPlan {
+  leg: PayoutLeg;
+  /** Shares the wrapper sold is actually worth, after rounding. */
+  sharesSold: bigint;
+  /** Raw payment units the user receives, which is also the signed minimum. */
+  paymentOut: bigint;
+}
+
+/**
+ * What a cash out of `shares` pays, at a price per whole share in raw payment
+ * units. The payment is priced on the shares the wrapper is actually worth
+ * after the program's rounding, not on the shares requested, so the figure
+ * shown is never more than the sale can deliver.
+ */
+export function planCashOut(
+  shares: bigint,
+  sources: PayoutSource[],
+  pricePerShare: bigint,
+): CashOutPlan | { short: bigint } {
+  const payout = planSingleWrapper(shares, sources);
+  if (payout.kind === "short") {
+    return { short: payout.available };
+  }
+  const paymentOut =
+    (payout.received * pricePerShare) / 10n ** BigInt(EQUITY_UNIT_DECIMALS);
+  return { leg: payout.legs[0], sharesSold: payout.received, paymentOut };
+}
+
+/**
+ * The whole cash out as one transaction: begin, the sale, settle.
+ *
+ * Signed by the user, and on devnet also by the liquidity key whose USDC
+ * stands in for the market. The user pays every fee and every rent, so the
+ * co-signature commits the liquidity key to exactly one thing, its own USDC
+ * transfer, and only inside a transaction that also carries the user's
+ * signed sale and the program's settle.
+ */
+export async function buildCashOutTransaction(params: {
+  program: Program<Idl>;
+  owner: PublicKey;
+  asset: VaultEntry;
+  shares: bigint;
+  plan: CashOutPlan;
+  liquidity: PublicKey;
+}): Promise<Transaction> {
+  const { program, owner, asset, shares, plan, liquidity } = params;
+  const vault = new PublicKey(asset.address);
+  const wrapper = plan.leg.source.wrapper;
+  const wrapperMint = new PublicKey(wrapper.mint);
+
+  const [escrow] = PublicKey.findProgramAddressSync(
+    [utf8.encode(CASH_OUT_ESCROW_SEED), owner.toBytes(), vault.toBytes()],
+    PROGRAM_ID,
+  );
+  const [cashOutReceipt] = PublicKey.findProgramAddressSync(
+    [utf8.encode(CASH_OUT_SEED), owner.toBytes(), vault.toBytes()],
+    PROGRAM_ID,
+  );
+  const userWrapperAccount = getAssociatedTokenAddressSync(
+    wrapperMint,
+    owner,
+    false,
+    TOKEN_2022_PROGRAM_ID,
+  );
+  const userPaymentAccount = ownerPaymentAccount(owner);
+
+  const begin = await program.methods
+    .beginCashOut(new BN(shares.toString()), new BN(plan.paymentOut.toString()))
+    .accounts({
+      user: owner,
+      vault,
+      wrapper: new PublicKey(wrapper.wrapper),
+      wrapperMint,
+      vaultWrapperAccount: new PublicKey(wrapper.vaultTokenAccount),
+      userWrapperAccount,
+      receiptMint: new PublicKey(asset.receiptMint),
+      userReceiptAccount: ownerReceiptAccount(owner, asset),
+      paymentMint: PAYMENT_MINT,
+      escrow,
+      cashOutReceipt,
+      instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
+      tokenProgram: TOKEN_2022_PROGRAM_ID,
+      paymentTokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    })
+    .instruction();
+
+  // ===================== DEVNET SUBSTITUTE FOR JUPITER =====================
+  //
+  // THIS IS NOT A SWAP. On mainnet this slot holds a Jupiter route, signed by
+  // the user alone, that sells the wrapper begin_cash_out just paid into the
+  // user's own account and delivers USDC into escrowPda. Jupiter is not
+  // deployed on devnet, and no venue makes a market in these mock mints, so
+  // there is no route to build.
+  //
+  // What stands in for it is two plain transfers with a devnet liquidity key
+  // as the counterparty: the user's wrapper to the liquidity key, and the
+  // liquidity key's USDC into the escrow, at a configured price. Because the
+  // liquidity key moves its own USDC it has to sign, which is the one thing a
+  // real route does not need: on mainnet this whole transaction is the user's
+  // signature alone.
+  //
+  // The program never inspects these instructions. settle_cash_out measures
+  // the escrow balance and holds it to the user's signed minimum, and would
+  // do exactly that whatever delivered the USDC. To go to mainnet, replace
+  // these two instructions with the Jupiter swap, destination escrowPda, drop
+  // the co-signature, and change nothing else.
+  const saleSubstitute = [
+    createTransferCheckedInstruction(
+      userWrapperAccount,
+      wrapperMint,
+      getAssociatedTokenAddressSync(wrapperMint, liquidity, false, TOKEN_2022_PROGRAM_ID),
+      owner,
+      plan.leg.rawOut,
+      wrapper.decimals,
+      [],
+      TOKEN_2022_PROGRAM_ID,
+    ),
+    createTransferCheckedInstruction(
+      getAssociatedTokenAddressSync(PAYMENT_MINT, liquidity, false, TOKEN_PROGRAM_ID),
+      PAYMENT_MINT,
+      escrow,
+      liquidity,
+      plan.paymentOut,
+      book.payment.decimals,
+      [],
+      TOKEN_PROGRAM_ID,
+    ),
+  ];
+  // =========================================================================
+
+  const settle = await program.methods
+    .settleCashOut()
+    .accounts({
+      user: owner,
+      vault,
+      cashOutReceipt,
+      escrow,
+      paymentMint: PAYMENT_MINT,
+      userPaymentAccount,
+      instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
+      paymentTokenProgram: TOKEN_PROGRAM_ID,
+    })
+    .instruction();
+
+  const transaction = new Transaction().add(
+    // Where the wrapper lands before it is sold, and where the dollars end
+    // up. Either may not exist yet for someone who has only ever saved.
+    createAssociatedTokenAccountIdempotentInstruction(
+      owner,
+      userWrapperAccount,
+      owner,
+      wrapperMint,
+      TOKEN_2022_PROGRAM_ID,
+    ),
+    createAssociatedTokenAccountIdempotentInstruction(
+      owner,
+      userPaymentAccount,
+      owner,
+      PAYMENT_MINT,
+      TOKEN_PROGRAM_ID,
+    ),
+    begin,
+    ...saleSubstitute,
+    settle,
+  );
+  transaction.feePayer = owner;
+  return transaction;
 }

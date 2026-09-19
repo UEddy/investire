@@ -53,6 +53,8 @@ export interface AddressBook {
   wrappers: Wrapper[];
   /** Absent in an address book written before there was a second vault. */
   vaults?: VaultEntry[];
+  /** Devnet cash out counterparty, public key only. See api/cash-out. */
+  cashOutLiquidity?: string;
   owner: { address: string; paymentAccount: string; receiptAccount: string };
   seeds: Record<string, string>;
 }

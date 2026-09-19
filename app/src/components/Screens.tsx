@@ -22,7 +22,7 @@ import {
   planPayout,
   planProblem,
 } from "@/lib/paritas";
-import { Prices, useSavings } from "@/lib/useSavings";
+import { CashOutQuote, Prices, quoteCashOut, useSavings } from "@/lib/useSavings";
 import { Portfolio, buildPortfolio, computeStreak } from "@/lib/portfolio";
 import {
   allowanceReach,
@@ -976,16 +976,24 @@ function PlanForm({
 }
 
 /**
- * Taking shares out of savings and into the saver's own wallet.
+ * Taking money out, two ways, chosen side by side with what each pays.
  *
- * The amount is in shares, because that is what the saver has; there is no
- * price here to turn it into dollars honestly, and withdraw does not sell
- * anything. What the preview shows is the exact share count that lands, worked
- * out with the program's own integer math against the vault as it is now, so
- * the number on the button is the number in the wallet.
+ * Shares: the receipts are burned and the shares land in the saver's own
+ * wallet, through whichever wrapper the vault can pay from, which is never
+ * named. Cash: the same, sold to dollars in the same transaction, landing in
+ * the dollar account plans buy from.
+ *
+ * The amount is always in shares, because that is what the saver has. Each
+ * option then shows exactly what it pays: the share count worked out with the
+ * program's own integer math, and the dollar figure from the quote the
+ * transaction will be built to, with the saver's signature binding it as a
+ * minimum.
  */
+type Way = "shares" | "cash";
+
 function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => void }) {
   const { connection } = useConnection();
+  const { publicKey } = useWallet();
   const shares = savings.holdings?.shares ?? {};
   const held = ASSETS.filter((asset) => (shares[asset.symbol] ?? 0n) > 0n);
 
@@ -994,10 +1002,15 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
   );
   const [text, setText] = useState("");
   const [all, setAll] = useState(false);
+  const [way, setWay] = useState<Way>("shares");
   const [sources, setSources] = useState<PayoutSource[] | null>(null);
+  const [quote, setQuote] = useState<CashOutQuote | null>(null);
 
   const asset = assetBySymbol(assetSymbol);
   const owned = shares[asset.symbol] ?? 0n;
+  const amount = all ? owned : parseShares(text, asset.receiptDecimals);
+  const tooMuch = amount !== null && amount > owned;
+  const valid = amount !== null && amount > 0n && !tooMuch;
 
   useEffect(() => {
     let live = true;
@@ -1010,22 +1023,48 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
     };
   }, [connection, asset]);
 
-  const amount = all ? owned : parseShares(text, asset.receiptDecimals);
-  const tooMuch = amount !== null && amount > owned;
-  const payout =
-    amount !== null && amount > 0n && !tooMuch && sources
-      ? planPayout(amount, sources)
-      : null;
-  const ready = payout?.kind === "ok";
+  // Quoted as the amount settles, not on every keystroke.
+  useEffect(() => {
+    setQuote(null);
+    if (!valid || !publicKey || amount === null) {
+      return;
+    }
+    let live = true;
+    const timer = setTimeout(() => {
+      quoteCashOut(publicKey, asset, amount).then((next) => live && setQuote(next));
+    }, 350);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [valid, amount, asset, publicKey]);
+
+  const payout = valid && sources ? planPayout(amount!, sources) : null;
+  const ready =
+    way === "shares" ? payout?.kind === "ok" : quote?.kind === "ok";
 
   const submit = async () => {
     if (!ready || amount === null) {
       return;
     }
-    if (await savings.withdraw(asset, amount)) {
+    const landed =
+      way === "shares"
+        ? await savings.withdraw(asset, amount)
+        : quote?.kind === "ok"
+          ? await savings.cashOut(asset, amount, quote.paymentOut)
+          : false;
+    if (landed) {
       onClose();
     }
   };
+
+  const sharesLine = (value: bigint) =>
+    `${formatShares(value, asset.receiptDecimals)} shares`;
+
+  const shortLine = (available: bigint, verb: string) =>
+    available === 0n
+      ? "That is too small. Try a larger amount."
+      : `Right now you can ${verb} up to ${sharesLine(available)} at once.`;
 
   return (
     <Shell>
@@ -1038,7 +1077,7 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
 
       <div className="flex-1 pt-6">
         <h2 className="text-[2rem] font-semibold leading-tight tracking-tight">
-          Take out shares
+          Take money out
         </h2>
 
         {held.length > 1 ? (
@@ -1051,15 +1090,12 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
                 setText("");
               }}
               options={held}
-              caption={(each) =>
-                `${formatShares(shares[each.symbol] ?? 0n, each.receiptDecimals)} shares`
-              }
+              caption={(each) => sharesLine(shares[each.symbol] ?? 0n)}
             />
           </div>
         ) : (
           <p className="mt-4 text-[15px] text-muted">
-            You have {formatShares(owned, asset.receiptDecimals)} shares of{" "}
-            {asset.displayName}.
+            You have {sharesLine(owned)} of {asset.displayName}.
           </p>
         )}
 
@@ -1098,35 +1134,51 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
           </motion.button>
         </div>
 
-        <div className="mt-6 min-h-[5rem] text-[15px] leading-relaxed">
-          {tooMuch ? (
-            <p className="text-ink">
-              You have {formatShares(owned, asset.receiptDecimals)} shares of{" "}
-              {asset.displayName}, so that is the most you can take out.
+        {tooMuch ? (
+          <p className="mt-6 text-[15px] leading-relaxed text-ink">
+            You have {sharesLine(owned)} of {asset.displayName}, so that is the
+            most you can take out.
+          </p>
+        ) : valid ? (
+          <div className="mt-6 space-y-3">
+            <WayOption
+              selected={way === "shares"}
+              onSelect={() => setWay("shares")}
+              title="Take the shares"
+              detail="Sent to your wallet, to hold yourself."
+              outcome={
+                !sources
+                  ? "Working it out"
+                  : payout?.kind === "ok"
+                    ? `${sharesLine(payout.received)} of ${asset.displayName}`
+                    : payout?.kind === "short"
+                      ? shortLine(payout.available, "take out")
+                      : ""
+              }
+              available={payout?.kind === "ok"}
+            />
+            <WayOption
+              selected={way === "cash"}
+              onSelect={() => setWay("cash")}
+              title="Cash out"
+              detail="Sold and paid into your dollar account, in one step."
+              outcome={
+                quote === null
+                  ? "Working it out"
+                  : quote.kind === "ok"
+                    ? formatMoney(quote.paymentOut, MONEY_DECIMALS)
+                    : quote.kind === "short"
+                      ? shortLine(quote.available, "cash out")
+                      : "Cash out isn't available right now."
+              }
+              available={quote?.kind === "ok"}
+            />
+            <p className="px-1 text-[13px] leading-relaxed text-muted">
+              Either way the shares leave your savings here, and any plan you
+              have keeps buying as before.
             </p>
-          ) : amount !== null && amount > 0n && !sources ? (
-            <p className="text-muted">Working it out</p>
-          ) : payout?.kind === "short" ? (
-            <p className="text-ink">
-              {payout.available === 0n
-                ? "That is too small to take out. Try a larger amount."
-                : `Right now you can take out up to ${formatShares(
-                    payout.available,
-                    asset.receiptDecimals,
-                  )} shares at once. Try that, or a smaller amount.`}
-            </p>
-          ) : payout?.kind === "ok" ? (
-            <p className="rounded-2xl bg-accentSoft px-4 py-3 text-ink">
-              You get{" "}
-              <span className="tabular font-semibold">
-                {formatShares(payout.received, asset.receiptDecimals)}
-              </span>{" "}
-              shares of {asset.displayName}, sent to your wallet to hold
-              yourself. They leave your savings here, and any plan you have
-              keeps buying as before.
-            </p>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
       </div>
 
       <motion.button
@@ -1136,16 +1188,72 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
         className="mt-6 w-full rounded-2xl bg-ink py-4 text-[17px] font-semibold text-paper active:opacity-90 disabled:opacity-40"
       >
         {savings.busy
-          ? "Taking out"
-          : payout?.kind === "ok"
-            ? `Take out ${formatShares(payout.received, asset.receiptDecimals)} shares`
-            : "Take out"}
+          ? way === "shares"
+            ? "Taking out"
+            : "Cashing out"
+          : way === "shares" && payout?.kind === "ok"
+            ? `Take ${sharesLine(payout.received)}`
+            : way === "cash" && quote?.kind === "ok"
+              ? `Cash out ${formatMoney(quote.paymentOut, MONEY_DECIMALS)}`
+              : "Take money out"}
       </motion.button>
 
       {savings.error ? (
         <p className="mt-4 text-center text-[15px] text-ink">{savings.error}</p>
       ) : null}
     </Shell>
+  );
+}
+
+/** One way of taking money out, with what it pays shown before choosing it. */
+function WayOption({
+  selected,
+  onSelect,
+  title,
+  detail,
+  outcome,
+  available,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  title: string;
+  detail: string;
+  outcome: string;
+  available: boolean;
+}) {
+  return (
+    <motion.button
+      whileTap={{ scale: 0.98 }}
+      onClick={onSelect}
+      className={[
+        "relative w-full rounded-2xl px-4 py-3.5 text-left",
+        selected ? "text-paper" : "border border-line bg-white/60 text-ink",
+      ].join(" ")}
+    >
+      {selected ? (
+        <motion.span layoutId="way-pill" className="absolute inset-0 rounded-2xl bg-ink" />
+      ) : null}
+      <span className="relative flex items-baseline justify-between gap-3">
+        <span className="text-[17px] font-semibold">{title}</span>
+        <span
+          className={[
+            "tabular text-right",
+            available ? "text-[17px] font-semibold" : "text-[13px]",
+            !available ? (selected ? "text-paper/70" : "text-muted") : "",
+          ].join(" ")}
+        >
+          {outcome}
+        </span>
+      </span>
+      <span
+        className={[
+          "relative mt-0.5 block text-[13px]",
+          selected ? "text-paper/70" : "text-muted",
+        ].join(" ")}
+      >
+        {detail}
+      </span>
+    </motion.button>
   );
 }
 

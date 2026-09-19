@@ -80,12 +80,40 @@ Stop is on the plan card itself, never behind the detail view. It asks once,
 softly, so a stray thumb does not end a habit, and then cancels the plan and
 revokes the permission in the same transaction. Nothing is locked.
 
-## Taking shares out
+## Taking money out
 
-"Take out", next to the shares figure, burns receipt tokens and pays out the
-same number of shares as wrapper tokens in the saver's own wallet. Amounts are
-in shares; nothing is sold, and there is no price on chain to turn shares into
-dollars honestly, so the screen does not try.
+"Take out", next to the shares figure, offers two ways side by side, each
+showing what it pays for the amount of shares entered:
+
+- **Take the shares.** `withdraw` burns receipt tokens and pays out the same
+  number of shares as wrapper tokens in the saver's own wallet.
+- **Cash out.** One transaction the saver signs: `begin_cash_out` (the same
+  burn and payout, through a shared `pay_out_wrapper`, into the saver's own
+  wallet, plus a fresh USDC escrow), the sale, then `settle_cash_out`, which
+  measures the escrow, holds it to the minimum the saver signed, pays them
+  and closes everything. It reuses the buy's introspection (`scan_pair_transaction`),
+  so it cannot settle without its begin, begin cannot land without its settle,
+  neither can be reached by CPI, and no other paritas instruction can share
+  the transaction.
+
+The threat model differs from a buy, deliberately. A buy's caller is an
+untrusted third party spending the saver's delegated money; a cash out's
+signer is the person being paid. The vault's exposure ends at
+`begin_cash_out`, exactly as in `withdraw`. The escrow and settle protect the
+saver from a bad route or a short fill, so the saver's own minimum is the
+right one to enforce.
+
+**Devnet.** The sale is a substitute, marked with the same DEVNET SUBSTITUTE
+banner as the keeper's buy: the saver's wrapper goes to a liquidity key and
+the liquidity key's USDC goes into the escrow. That key must sign its own
+transfer, so `/api/cash-out` builds the transaction, co-signs its part and
+returns it for the saver to sign: still one transaction and one prompt. The
+co-signature covers the whole message, so nothing in it can be altered, and
+the saver pays every fee and rent. On mainnet the sale is a Jupiter route the
+saver signs alone, and the route is not needed.
+
+A cash out sells through one wrapper, since the program allows one begin per
+transaction; the screen says the most one cash out can take when that binds.
 
 Which wrapper pays is decided by `planPayout` in `src/lib/paritas.ts` and never
 shown: the one holding the most, if it covers the whole amount, otherwise a
@@ -158,7 +186,10 @@ It exercises every function the UI calls, in the order the UI calls them:
 load plans, read holdings, check the funding block, cancel, create, re-read,
 and assert the delegation landed and now blocks a second plan. Then it moves
 the plan to the second asset, and takes 0.1 of a share out, checking the
-wallet received exactly the raw amount the preview computed. It also asserts
+wallet received exactly the raw amount the preview computed. Last it cashes
+out 0.1 of a share, checking the dollars received match the quote to the
+unit, after first proving that a sale one unit short of the signed minimum
+reverts with the shares untouched. It also asserts
 the headline sentence contains no wrapper name, multiplier or basis point.
 
 What that leaves untested is the wallet adapter handing back a signature.
@@ -174,6 +205,8 @@ Set the project's **Root Directory** to `app`. Vercel clones the whole repo, so
 | `NEXT_PUBLIC_RPC_URL` | no | **public** | Bypasses the proxy and connects direct. Only for an endpoint with no key in it. |
 | `PYTH_API_KEY` | for prices | server only | Pyth Hermes key, sent as `Authorization: Bearer`. Without it the dashboard shows shares and money put in, and says today's value is unavailable. |
 | `PYTH_HERMES_URL` | no | server only | Defaults to `https://pyth.dourolabs.app/hermes`. |
+| `CASH_OUT_LIQUIDITY_KEY` | for devnet cash out | server only, **Sensitive** | Secret key (JSON array) of the devnet liquidity key named in `devnet.json`. Any other key is refused. Without it, cash out says it is unavailable; taking shares still works. |
+| `CASH_OUT_QUOTE_USDC_PER_SHARE` | no | server only | Devnet sell price, default `5`, matching the keeper's buy quote. `CASH_OUT_QUOTE_<SYMBOL>` overrides per asset. |
 
 ### Why the key is not a `NEXT_PUBLIC_` variable
 

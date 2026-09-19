@@ -101,4 +101,16 @@ pub mod paritas {
     pub fn settle_execution(ctx: Context<SettleExecution>, min_equity_units: u64) -> Result<()> {
         instructions::settle_execution(ctx, min_equity_units)
     }
+
+    pub fn begin_cash_out(
+        ctx: Context<BeginCashOut>,
+        receipt_amount: u64,
+        min_payment_out: u64,
+    ) -> Result<()> {
+        instructions::begin_cash_out(ctx, receipt_amount, min_payment_out)
+    }
+
+    pub fn settle_cash_out(ctx: Context<SettleCashOut>) -> Result<()> {
+        instructions::settle_cash_out(ctx)
+    }
 }

@@ -221,3 +221,33 @@ pub struct ExecutionReceipt {
     pub due_ts: i64,
     pub bump: u8,
 }
+
+pub const CASH_OUT_SEED: &[u8] = b"cash_out";
+pub const CASH_OUT_ESCROW_SEED: &[u8] = b"cash_out_escrow";
+
+/// The record begin_cash_out writes and settle_cash_out consumes, for exactly
+/// the span of one transaction, like ExecutionReceipt.
+///
+/// The difference from a buy is who is being protected. In a buy the caller
+/// is an untrusted third party spending the owner's delegated money, so the
+/// floor has to be the owner's, never the caller's. In a cash out the signer
+/// is the user being paid: the vault's exposure ends at begin_cash_out, where
+/// receipts are burned against wrapper paid out exactly as in withdraw. So
+/// min_payment_out is the user's own figure and binding them to it is correct;
+/// the escrow and the settle protect the user from a bad route or a short
+/// fill, not the vault from the user.
+#[account]
+#[derive(InitSpace)]
+pub struct CashOutReceipt {
+    pub user: Pubkey,
+    pub vault: Pubkey,
+    pub wrapper_mint: Pubkey,
+    /// Raw wrapper paid out to the user to sell.
+    pub wrapper_paid: u64,
+    /// The mint the user asked to be paid in. The user's choice, since the
+    /// user is the one being paid; the vault holds none of it.
+    pub payment_mint: Pubkey,
+    pub escrow: Pubkey,
+    pub min_payment_out: u64,
+    pub bump: u8,
+}

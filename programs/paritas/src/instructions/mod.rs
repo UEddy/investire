@@ -1,5 +1,6 @@
 pub mod add_wrapper;
 pub mod begin_execution;
+pub mod cash_out;
 pub mod cancel_schedule;
 pub mod create_schedule;
 pub mod deposit;
@@ -14,6 +15,7 @@ pub mod withdraw;
 
 pub use add_wrapper::*;
 pub use begin_execution::*;
+pub use cash_out::*;
 pub use cancel_schedule::*;
 pub use create_schedule::*;
 pub use deposit::*;

@@ -76,4 +76,22 @@ pub enum ParitasError {
     FloorToleranceTooWide,
     #[msg("schedule amount is too small to pay this vault's minimum keeper fee")]
     AmountCannotCoverKeeperFee,
+    // Appended, never inserted: error codes are 6000 plus position, and
+    // clients match on them.
+    #[msg("no begin_cash_out in this transaction")]
+    MissingBeginCashOut,
+    #[msg("more than one begin_cash_out in this transaction")]
+    DuplicateBeginCashOut,
+    #[msg("no settle_cash_out in this transaction")]
+    MissingSettleCashOut,
+    #[msg("more than one settle_cash_out in this transaction")]
+    DuplicateSettleCashOut,
+    #[msg("begin_cash_out must come before settle_cash_out")]
+    CashOutOrderInvalid,
+    #[msg("begin_cash_out must be a top level instruction, not a CPI")]
+    BeginCashOutNotTopLevel,
+    #[msg("settle_cash_out must be a top level instruction, not a CPI")]
+    SettleCashOutNotTopLevel,
+    #[msg("the cash out delivered less than the minimum the user signed for")]
+    CashOutBelowMinimum,
 }

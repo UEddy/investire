@@ -1,6 +1,6 @@
 {
   "cluster": "devnet",
-  "generatedAt": "2026-09-19T08:03:56.723Z",
+  "generatedAt": "2026-09-19T08:22:43.105Z",
   "rpcUrl": "https://api.devnet.solana.com",
   "programId": "5QkWw7s4dQwAhNZQoKGDTrb6xqcZnMi8XPA7tAkD29LV",
   "tokenProgram2022": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
@@ -144,6 +144,7 @@
       "ownerReceiptAccount": "AsDTtLW5UCi7MJ8LibHeBmU1ErhUWJaKoiUBNbBEe1GS"
     }
   ],
+  "cashOutLiquidity": "3VKdmb4yHUdhz1L2DfcfrEqjPo8qFXdrK1xwqonJ7KSu",
   "owner": {
     "address": "4Uatg8BVpuVH3CW7GQ7ueek4ZDaCCZWH82mqCnuNkNqm",
     "paymentAccount": "2i3DtQntkkRgqKRpNgLFgNqFzwXWshHW6tYPKwPCKezx",
@@ -155,6 +156,8 @@
     "wrapper": "wrapper",
     "schedule": "schedule",
     "executionReceipt": "execution",
-    "executionEscrow": "escrow"
+    "executionEscrow": "escrow",
+    "cashOut": "cash_out",
+    "cashOutEscrow": "cash_out_escrow"
   }
 }

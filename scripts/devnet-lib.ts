@@ -106,6 +106,12 @@ export interface AddressBook {
    * keeps working against a rebuilt address book until it is updated.
    */
   vaults: VaultEntry[];
+  /**
+   * The devnet counterparty for cash outs: it buys the wrapper a user sells,
+   * paying USDC into the escrow, in place of a Jupiter route. Public key only;
+   * the secret lives in .devnet-keys and, for the app, in CASH_OUT_LIQUIDITY_KEY.
+   */
+  cashOutLiquidity?: string;
   owner: {
     address: string;
     paymentAccount: string;

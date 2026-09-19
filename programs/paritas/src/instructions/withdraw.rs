@@ -23,49 +23,90 @@ use crate::state::{Vault, Wrapper, VAULT_SEED, WRAPPER_SEED};
 /// wrappers can be short any single one even when its total equity units
 /// are more than sufficient.
 pub fn withdraw(ctx: Context<Withdraw>, receipt_amount: u64) -> Result<()> {
-    require!(receipt_amount > 0, ParitasError::ZeroAmount);
+    let accounts = ctx.accounts;
+    pay_out_wrapper(PayOut {
+        vault: &mut accounts.vault,
+        wrapper: &accounts.wrapper,
+        wrapper_mint: &accounts.wrapper_mint,
+        vault_wrapper_account: &accounts.vault_wrapper_account,
+        destination: &accounts.user_wrapper_account,
+        receipt_mint: &accounts.receipt_mint,
+        user_receipt_account: &accounts.user_receipt_account,
+        user: &accounts.user,
+        token_program: &accounts.token_program,
+        receipt_amount,
+    })?;
+    Ok(())
+}
+
+/// Everything pay_out_wrapper touches, borrowed from whichever instruction's
+/// accounts it is called with.
+pub struct PayOut<'a, 'info> {
+    pub vault: &'a mut Account<'info, Vault>,
+    pub wrapper: &'a Account<'info, Wrapper>,
+    pub wrapper_mint: &'a InterfaceAccount<'info, Mint>,
+    pub vault_wrapper_account: &'a InterfaceAccount<'info, TokenAccount>,
+    pub destination: &'a InterfaceAccount<'info, TokenAccount>,
+    pub receipt_mint: &'a InterfaceAccount<'info, Mint>,
+    pub user_receipt_account: &'a InterfaceAccount<'info, TokenAccount>,
+    pub user: &'a Signer<'info>,
+    pub token_program: &'a Interface<'info, TokenInterface>,
+    pub receipt_amount: u64,
+}
+
+/// The core of withdraw, shared with begin_cash_out: burn receipt_amount of
+/// the user's receipt tokens and pay out the same equity as raw wrapper, at
+/// that wrapper's own live multiplier. Returns the raw amount paid.
+///
+/// One implementation for both on purpose. The vault's safety in a cash out
+/// is exactly its safety in a withdraw, receipts burned against wrapper paid
+/// out at the multiplier, and keeping one copy of that arithmetic means there
+/// is one copy to audit and no way for the two to drift.
+pub fn pay_out_wrapper(p: PayOut) -> Result<u64> {
+    require!(p.receipt_amount > 0, ParitasError::ZeroAmount);
 
     let now = Clock::get()?.unix_timestamp;
 
-    let mint_data = ctx.accounts.wrapper_mint.to_account_info();
-    let mint_data = mint_data.try_borrow_data()?;
+    let mint_info = p.wrapper_mint.to_account_info();
+    let mint_data = mint_info.try_borrow_data()?;
     let config = multiplier::read_scaled_ui_config(&mint_data)?;
     let mult_fixed = multiplier::current_multiplier_fixed(&config, now)?;
     drop(mint_data);
 
-    let wrapper_decimals = ctx.accounts.wrapper.decimals;
-    let amount_out = multiplier::from_equity_units(receipt_amount, wrapper_decimals, mult_fixed)?;
+    let wrapper_decimals = p.wrapper.decimals;
+    let amount_out =
+        multiplier::from_equity_units(p.receipt_amount, wrapper_decimals, mult_fixed)?;
     require!(amount_out > 0, ParitasError::ZeroAmount);
 
     require!(
-        ctx.accounts.vault_wrapper_account.amount >= amount_out,
+        p.vault_wrapper_account.amount >= amount_out,
         ParitasError::InsufficientVaultBalance
     );
 
     burn(
         CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
+            p.token_program.to_account_info(),
             Burn {
-                mint: ctx.accounts.receipt_mint.to_account_info(),
-                from: ctx.accounts.user_receipt_account.to_account_info(),
-                authority: ctx.accounts.user.to_account_info(),
+                mint: p.receipt_mint.to_account_info(),
+                from: p.user_receipt_account.to_account_info(),
+                authority: p.user.to_account_info(),
             },
         ),
-        receipt_amount,
+        p.receipt_amount,
     )?;
 
-    let symbol_bytes = ctx.accounts.vault.symbol.as_bytes();
-    let bump = ctx.accounts.vault.bump;
-    let signer_seeds: &[&[u8]] = &[VAULT_SEED, symbol_bytes, &[bump]];
+    let symbol_bytes = p.vault.symbol.as_bytes().to_vec();
+    let bump = p.vault.bump;
+    let signer_seeds: &[&[u8]] = &[VAULT_SEED, &symbol_bytes, &[bump]];
 
     transfer_checked(
         CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
+            p.token_program.to_account_info(),
             TransferChecked {
-                from: ctx.accounts.vault_wrapper_account.to_account_info(),
-                mint: ctx.accounts.wrapper_mint.to_account_info(),
-                to: ctx.accounts.user_wrapper_account.to_account_info(),
-                authority: ctx.accounts.vault.to_account_info(),
+                from: p.vault_wrapper_account.to_account_info(),
+                mint: p.wrapper_mint.to_account_info(),
+                to: p.destination.to_account_info(),
+                authority: p.vault.to_account_info(),
             },
             &[signer_seeds],
         ),
@@ -73,13 +114,13 @@ pub fn withdraw(ctx: Context<Withdraw>, receipt_amount: u64) -> Result<()> {
         wrapper_decimals,
     )?;
 
-    let vault = &mut ctx.accounts.vault;
-    vault.total_equity_units = vault
+    p.vault.total_equity_units = p
+        .vault
         .total_equity_units
-        .checked_sub(receipt_amount as u128)
+        .checked_sub(p.receipt_amount as u128)
         .ok_or(ParitasError::MathOverflow)?;
 
-    Ok(())
+    Ok(amount_out)
 }
 
 #[derive(Accounts)]

@@ -27,6 +27,7 @@
  * Every vault in the address book is served. Each delivers its own first
  * wrapper, which is the one setup-devnet.ts stocks the keeper with.
  *   KEEPER_COMPUTE_UNIT_LIMIT   default 400000
+ *   KEEPER_CONFIRM_TIMEOUT_SECONDS default 60, see sendAndConfirm
  */
 import * as fs from "fs";
 import * as path from "path";
@@ -38,9 +39,9 @@ import {
   Keypair,
   PublicKey,
   SYSVAR_INSTRUCTIONS_PUBKEY,
+  Signer,
   SystemProgram,
   Transaction,
-  sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import {
   TOKEN_2022_PROGRAM_ID,
@@ -94,6 +95,7 @@ const IDL_PATH =
 const POLL_SECONDS = optionalNumber("KEEPER_POLL_SECONDS", 60);
 const COMPUTE_UNIT_LIMIT = optionalNumber("KEEPER_COMPUTE_UNIT_LIMIT", 400_000);
 const QUOTE_USDC_PER_SHARE = optionalNumber("KEEPER_QUOTE_USDC_PER_SHARE", 5);
+const CONFIRM_TIMEOUT_SECONDS = optionalNumber("KEEPER_CONFIRM_TIMEOUT_SECONDS", 60);
 
 // --- logging ---------------------------------------------------------------
 
@@ -158,6 +160,89 @@ async function sleep(seconds: number): Promise<void> {
   // promptly instead of after the full wait.
   for (let i = 0; i < seconds && !stopping; i++) {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+}
+
+// --- sending ---------------------------------------------------------------
+
+/**
+ * Signs, sends and confirms a transaction over plain HTTP, and gives up after
+ * a bounded wait.
+ *
+ * sendAndConfirmTransaction confirms by subscribing over a websocket. On the
+ * public devnet endpoint that subscription can be refused with a 429, and
+ * when it is, the confirmation promise simply never settles: the keeper sat
+ * silent for minutes on its startup transaction while that transaction had
+ * landed in three seconds. The app hit the same thing through its HTTP only
+ * RPC proxy and polls getSignatureStatuses instead; this is the same fix.
+ *
+ * Every wait ends. Confirmed, the signature comes back. Failed on chain, the
+ * chain's error is thrown. Out of time, or past the blockhash's last valid
+ * height, it throws a "was not confirmed" error, which withRetry classifies
+ * as outcome unknown: retried for idempotent sends, reported and left alone
+ * for an execution, whose next_due_ts the next poll re-reads to learn what
+ * actually happened. A transient failure of a status poll is not an answer,
+ * so it is waited through rather than thrown.
+ */
+async function sendAndConfirm(
+  connection: Connection,
+  transaction: Transaction,
+  signers: Signer[],
+  timeoutSeconds = CONFIRM_TIMEOUT_SECONDS
+): Promise<string> {
+  const { blockhash, lastValidBlockHeight } =
+    await connection.getLatestBlockhash("confirmed");
+  transaction.recentBlockhash = blockhash;
+  transaction.lastValidBlockHeight = lastValidBlockHeight;
+  transaction.signatures = [];
+  transaction.sign(...signers);
+
+  const signature = await connection.sendRawTransaction(
+    transaction.serialize(),
+    { preflightCommitment: "confirmed" }
+  );
+
+  const deadline = Date.now() + timeoutSeconds * 1_000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    try {
+      const { value } = await connection.getSignatureStatuses([signature]);
+      const status = value[0];
+      if (status?.err) {
+        throw new ChainError(signature, status.err);
+      }
+      if (
+        status?.confirmationStatus === "confirmed" ||
+        status?.confirmationStatus === "finalized"
+      ) {
+        return signature;
+      }
+      if (!status) {
+        const height = await connection.getBlockHeight("confirmed");
+        if (height > lastValidBlockHeight) {
+          throw new Error(
+            `transaction ${signature} was not confirmed: block height exceeded`
+          );
+        }
+      }
+    } catch (err) {
+      if (err instanceof ChainError || /was not confirmed/.test(String(err))) {
+        throw err;
+      }
+      // A 429 or a dropped connection on a status poll says nothing about the
+      // transaction. Keep waiting until the deadline.
+    }
+  }
+  throw new Error(
+    `transaction ${signature} was not confirmed within ${timeoutSeconds}s`
+  );
+}
+
+/** The chain's own verdict on a transaction that landed and failed. */
+class ChainError extends Error {
+  constructor(readonly signature: string, readonly detail: unknown) {
+    super(`transaction ${signature} failed on chain: ${JSON.stringify(detail)}`);
+    this.name = "ChainError";
   }
 }
 
@@ -514,14 +599,7 @@ async function execute(
 
   const signature = await withRetry(
     `execute ${schedulePda.toBase58()}`,
-    () => {
-      transaction.recentBlockhash = undefined;
-      transaction.lastValidBlockHeight = undefined;
-      transaction.signatures = [];
-      return sendAndConfirmTransaction(ctx.connection, transaction, [
-        ctx.keeper,
-      ]);
-    },
+    () => sendAndConfirm(ctx.connection, transaction, [ctx.keeper]),
     // No idempotent flag. An execution is not replayable: resending one whose
     // outcome is unknown could debit the owner twice if the first copy landed.
     // The schedule's next_due_ts already moved, so the duplicate would fail on
@@ -752,10 +830,7 @@ async function main(): Promise<void> {
           )
         )
       );
-      tx.recentBlockhash = undefined;
-      tx.lastValidBlockHeight = undefined;
-      tx.signatures = [];
-      return sendAndConfirmTransaction(connection, tx, [keeper]);
+      return sendAndConfirm(connection, tx, [keeper]);
     },
     retryOptions({ idempotent: true })
   );

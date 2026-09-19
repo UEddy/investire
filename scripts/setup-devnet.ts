@@ -789,6 +789,78 @@ async function main(): Promise<void> {
   log("usdc balance", `${formatAmount(usdcHeld, usdc.decimals)} USDC`);
   console.log();
 
+  // --- cash out liquidity -------------------------------------------------
+  // Devnet only. A cash out sells the user's wrapper for USDC; on mainnet a
+  // Jupiter route does that, here this key does, from its own USDC, and the
+  // app's server co-signs its leg. It needs token accounts for every wrapper
+  // it may buy and for USDC, and a little SOL. The USDC itself cannot be
+  // minted, devnet USDC being Circle's, so it is reported, not topped up.
+  console.log("Cash out liquidity:");
+  const liquidity = loadOrCreateKeypair(
+    path.join(REPO_ROOT, ".devnet-keys", "cash-out-liquidity.json")
+  ).publicKey;
+  const liquidityUsdc = getAssociatedTokenAddressSync(
+    context.devnetUsdcMint,
+    liquidity,
+    false,
+    TOKEN_PROGRAM_ID
+  );
+  await send(
+    connection,
+    "cash out liquidity accounts",
+    new Transaction().add(
+      createAssociatedTokenAccountIdempotentInstruction(
+        owner,
+        liquidityUsdc,
+        liquidity,
+        context.devnetUsdcMint,
+        TOKEN_PROGRAM_ID
+      ),
+      ...vaults.flatMap((vault) =>
+        vault.wrappers.map((wrapper) =>
+          createAssociatedTokenAccountIdempotentInstruction(
+            owner,
+            getAssociatedTokenAddressSync(
+              new PublicKey(wrapper.mint),
+              liquidity,
+              false,
+              TOKEN_2022_PROGRAM_ID
+            ),
+            liquidity,
+            new PublicKey(wrapper.mint),
+            TOKEN_2022_PROGRAM_ID
+          )
+        )
+      )
+    ),
+    [wallet],
+    true
+  );
+  const liquiditySol = await withRetry("liquidity balance", () =>
+    connection.getBalance(liquidity)
+  );
+  if (liquiditySol < 20_000_000) {
+    await send(
+      connection,
+      "fund cash out liquidity",
+      new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: owner,
+          toPubkey: liquidity,
+          lamports: 50_000_000 - liquiditySol,
+        })
+      ),
+      [wallet]
+    );
+  }
+  const liquidityHeld = await tokenBalance(connection, liquidityUsdc);
+  log("address", liquidity.toBase58());
+  log("usdc", `${formatAmount(liquidityHeld, usdc.decimals)} USDC`);
+  if (liquidityHeld === 0n) {
+    log("usdc", "empty: cash outs will be refused until it holds some");
+  }
+  console.log();
+
   // --- address book -------------------------------------------------------
   const previous = loadAddressBookIfPresent();
   const book: AddressBook = {
@@ -819,6 +891,7 @@ async function main(): Promise<void> {
     },
     wrappers: vaults[0].wrappers,
     vaults,
+    cashOutLiquidity: liquidity.toBase58(),
     owner: {
       address: owner.toBase58(),
       paymentAccount: ownerPaymentAccount.toBase58(),
@@ -833,6 +906,8 @@ async function main(): Promise<void> {
       schedule: "schedule",
       executionReceipt: "execution",
       executionEscrow: "escrow",
+      cashOut: "cash_out",
+      cashOutEscrow: "cash_out_escrow",
     },
   };
   saveAddressBook(book);

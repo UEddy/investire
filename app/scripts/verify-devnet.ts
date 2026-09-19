@@ -11,6 +11,7 @@
  *   ANCHOR_WALLET=~/.config/solana/id.json npm run verify
  */
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { AnchorProvider, Idl, Wallet } from "@coral-xyz/anchor";
 import {
   Connection,
@@ -36,7 +37,9 @@ import {
   buildCancelPlanTransaction,
   buildChangePlanTransaction,
   buildCreatePlanTransaction,
+  buildCashOutTransaction,
   buildWithdrawTransaction,
+  planCashOut,
   loadExecutions,
   loadFunding,
   loadPayoutSources,
@@ -44,6 +47,7 @@ import {
   loadPlanLimits,
   planProblem,
   checkFundingBlock,
+  confirmSignature,
   getProgram,
   loadHoldings,
   loadPlans,
@@ -414,6 +418,84 @@ async function main(): Promise<void> {
   if (withdrawal.received !== quoted.received) {
     fail("what landed differs from what the preview promised");
   }
+
+  // --- cashing out ---------------------------------------------------------
+  // Signed the way the app signs it: the liquidity key partially, from the
+  // server, then the saver. One transaction.
+  const liquidityPath = path.resolve(__dirname, "../../.devnet-keys/cash-out-liquidity.json");
+  const liquidity = Keypair.fromSecretKey(
+    Uint8Array.from(JSON.parse(fs.readFileSync(liquidityPath, "utf8"))),
+  );
+  if (liquidity.publicKey.toBase58() !== ADDRESS_BOOK.cashOutLiquidity) {
+    fail("the liquidity key on disk is not the one the address book names");
+  }
+  const price = 5_000_000n; // the devnet quote, $5.00 a share
+  const cashShares = 100_000_000n; // 0.1 of a share
+  const cashPlan = planCashOut(cashShares, await loadPayoutSources(connection, nvda), price);
+  if ("short" in cashPlan) {
+    fail(`0.1 shares could not be planned for a cash out, most is ${cashPlan.short}`);
+  }
+
+  const signAndSend = async (what: string, tx: Transaction) => {
+    const { blockhash } = await connection.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = blockhash;
+    tx.partialSign(liquidity);
+    tx.partialSign(keypair);
+    const raw = tx.serialize();
+    const signature = await connection.sendRawTransaction(raw, { skipPreflight: false });
+    await confirmSignature(connection, signature);
+    return raw.length;
+  };
+
+  // A delivery short of the signed minimum must revert everything, shares
+  // included. The same transaction with the sale shorted by one unit.
+  const shorted = await buildCashOutTransaction({
+    program,
+    owner,
+    asset: nvda,
+    shares: cashShares,
+    plan: { ...cashPlan, paymentOut: cashPlan.paymentOut },
+    liquidity: liquidity.publicKey,
+  });
+  const usdcLeg = shorted.instructions[4];
+  // TransferChecked data: [tag u8][amount u64 le][decimals u8]
+  usdcLeg.data.writeBigUInt64LE(cashPlan.paymentOut - 1n, 1);
+  const sharesBeforeShort = (await loadHoldings(connection, owner, plans)).shares[nvda.symbol];
+  try {
+    await signAndSend("shorted cash out", shorted);
+    fail("a cash out delivering less than the signed minimum landed");
+  } catch (err) {
+    if (!/0x179c|CashOutBelowMinimum/.test(String((err as any)?.logs ?? err))) {
+      fail(`shorted cash out failed, but not on the minimum: ${String(err).slice(0, 200)}`);
+    }
+  }
+  if ((await loadHoldings(connection, owner, plans)).shares[nvda.symbol] !== sharesBeforeShort) {
+    fail("a reverted cash out still moved shares");
+  }
+  ok("a sale short of the signed minimum reverts, shares untouched");
+
+  const usdcBefore = (await loadHoldings(connection, owner, plans)).cash;
+  const cashTx = await buildCashOutTransaction({
+    program,
+    owner,
+    asset: nvda,
+    shares: cashShares,
+    plan: cashPlan,
+    liquidity: liquidity.publicKey,
+  });
+  const size = await signAndSend("cash out", cashTx);
+  const after2 = await loadHoldings(connection, owner, plans);
+  if (after2.cash - usdcBefore !== cashPlan.paymentOut) {
+    fail(`cash rose by ${after2.cash - usdcBefore}, the quote said ${cashPlan.paymentOut}`);
+  }
+  if (sharesBeforeShort - after2.shares[nvda.symbol] !== cashShares) {
+    fail("the cash out did not burn exactly the shares asked for");
+  }
+  ok(
+    `cashed out ${formatShares(cashShares, nvda.receiptDecimals)} shares for ` +
+      `${formatMoney(cashPlan.paymentOut, ADDRESS_BOOK.payment.decimals)}, exactly as quoted, ` +
+      `in one ${size} byte transaction`,
+  );
 
   // --- the copy rule ------------------------------------------------------
   const forbidden = ["NVDAx", "NVDAon", "multiplier", "basis point", "wrapper"];
