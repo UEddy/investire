@@ -21,8 +21,11 @@
  *   PARITAS_ADDRESS_BOOK        default ./devnet.json
  *   PARITAS_IDL                 default ./target/idl/paritas.json
  *   KEEPER_POLL_SECONDS         default 60
- *   KEEPER_WRAPPER              default the first wrapper in the address book
  *   KEEPER_QUOTE_USDC_PER_SHARE default 5.00, see quoteDelivery
+ *   KEEPER_QUOTE_<SYMBOL>       per vault override, e.g. KEEPER_QUOTE_SPY
+ *
+ * Every vault in the address book is served. Each delivers its own first
+ * wrapper, which is the one setup-devnet.ts stocks the keeper with.
  *   KEEPER_COMPUTE_UNIT_LIMIT   default 400000
  */
 import * as fs from "fs";
@@ -50,7 +53,9 @@ import {
 import {
   AddressBook,
   RetryOptions,
+  VaultEntry,
   WrapperEntry,
+  vaultsOf,
   currentMultiplierFixed,
   formatAmount,
   keeperFee,
@@ -246,10 +251,11 @@ interface ScheduleAccount {
 function quoteDelivery(
   amountUsdc: bigint,
   paymentDecimals: number,
-  wrapper: WrapperEntry
+  wrapper: WrapperEntry,
+  quoteUsdcPerShare: number
 ): bigint {
   const usdcPerShare = BigInt(
-    Math.round(QUOTE_USDC_PER_SHARE * Number(pow10(paymentDecimals)))
+    Math.round(quoteUsdcPerShare * Number(pow10(paymentDecimals)))
   );
   return (amountUsdc * pow10(wrapper.decimals)) / usdcPerShare;
 }
@@ -260,6 +266,9 @@ interface Context {
   connection: Connection;
   program: Program<anchor.Idl>;
   book: AddressBook;
+  /** The vault this context executes for. One context per vault. */
+  vaultEntry: VaultEntry;
+  quoteUsdcPerShare: number;
   keeper: Keypair;
   wrapper: WrapperEntry;
   wrapperMint: PublicKey;
@@ -298,11 +307,11 @@ async function preflight(
     return (
       `quote of ${formatAmount(
         expectedEquityUnits,
-        ctx.book.vault.receiptDecimals
+        ctx.vaultEntry.receiptDecimals
       )} shares is ` +
       `below the schedule floor of ${formatAmount(
         floor,
-        ctx.book.vault.receiptDecimals
+        ctx.vaultEntry.receiptDecimals
       )}`
     );
   }
@@ -381,7 +390,8 @@ async function execute(
   const delivery = quoteDelivery(
     amount,
     ctx.book.payment.decimals,
-    ctx.wrapper
+    ctx.wrapper,
+    ctx.quoteUsdcPerShare
   );
 
   const now = Math.floor(Date.now() / 1000);
@@ -534,8 +544,8 @@ async function execute(
 
   const fee = keeperFee(
     amount,
-    BigInt(ctx.book.vault.keeperFeeBps),
-    BigInt(ctx.book.vault.keeperFeeMin)
+    BigInt(ctx.vaultEntry.keeperFeeBps),
+    BigInt(ctx.vaultEntry.keeperFeeMin)
   );
 
   log(
@@ -545,8 +555,8 @@ async function execute(
       `amount=${formatAmount(amount, ctx.book.payment.decimals)} ${
         ctx.book.payment.label
       } ` +
-      `equity=${formatAmount(credited, ctx.book.vault.receiptDecimals)} ${
-        ctx.book.vault.symbol
+      `equity=${formatAmount(credited, ctx.vaultEntry.receiptDecimals)} ${
+        ctx.vaultEntry.symbol
       } ` +
       `fee=${formatAmount(fee, ctx.book.payment.decimals)} ${
         ctx.book.payment.label
@@ -557,11 +567,15 @@ async function execute(
 
 // --- the poll loop ---------------------------------------------------------
 
-async function pollOnce(ctx: Context, activeOffset: number): Promise<void> {
+async function pollOnce(
+  contexts: Context[],
+  activeOffset: number
+): Promise<void> {
+  const first = contexts[0];
   const accounts = await withRetry(
     "fetch due schedules",
     () =>
-      (ctx.program.account as any).schedule.all([
+      (first.program.account as any).schedule.all([
         {
           memcmp: {
             offset: activeOffset,
@@ -572,9 +586,13 @@ async function pollOnce(ctx: Context, activeOffset: number): Promise<void> {
     retryOptions()
   );
 
+  // Routed by vault. A schedule on a vault this address book does not list is
+  // not ours to run, and is left alone rather than executed against the wrong
+  // wrapper.
+  const byVault = new Map(contexts.map((ctx) => [ctx.vault.toBase58(), ctx]));
   const now = Math.floor(Date.now() / 1000);
   const due = (accounts as { publicKey: PublicKey; account: ScheduleAccount }[])
-    .filter((entry) => entry.account.vault.equals(ctx.vault))
+    .filter((entry) => byVault.has(entry.account.vault.toBase58()))
     .filter((entry) => entry.account.nextDueTs.toNumber() <= now)
     // Oldest due first, so a backlog is worked through in the order the owners
     // were promised rather than in whatever order the RPC returned.
@@ -592,6 +610,7 @@ async function pollOnce(ctx: Context, activeOffset: number): Promise<void> {
       log("info", "stopping, leaving the rest for the next run");
       return;
     }
+    const ctx = byVault.get(entry.account.vault.toBase58())!;
     try {
       await execute(ctx, entry.publicKey, entry.account);
     } catch (err) {
@@ -631,51 +650,67 @@ async function main(): Promise<void> {
     );
   }
 
-  const label = process.env.KEEPER_WRAPPER ?? book.wrappers[0].label;
-  const wrapper = book.wrappers.find((w) => w.label === label);
-  if (!wrapper) {
-    throw new Error(
-      `KEEPER_WRAPPER=${label} is not in the address book (have: ${book.wrappers
-        .map((w) => w.label)
-        .join(", ")})`
+  // Warned rather than thrown: under systemd a throw here is a restart loop
+  // over a setting that no longer does anything.
+  if (process.env.KEEPER_WRAPPER) {
+    log(
+      "warn",
+      "KEEPER_WRAPPER is ignored: every vault delivers its own first wrapper"
     );
   }
 
-  const wrapperMint = new PublicKey(wrapper.mint);
   const paymentMint = new PublicKey(book.payment.mint);
-  const ctx: Context = {
-    connection,
-    program,
-    book,
-    keeper,
-    wrapper,
-    wrapperMint,
+  const keeperPaymentAccount = getAssociatedTokenAddressSync(
     paymentMint,
-    vault: new PublicKey(book.vault.address),
-    receiptMint: new PublicKey(book.vault.receiptMint),
-    wrapperPda: new PublicKey(wrapper.wrapper),
-    vaultWrapperAccount: new PublicKey(wrapper.vaultTokenAccount),
-    keeperPaymentAccount: getAssociatedTokenAddressSync(
-      paymentMint,
-      keeper.publicKey,
-      false,
-      TOKEN_PROGRAM_ID
-    ),
-    keeperWrapperAccount: getAssociatedTokenAddressSync(
+    keeper.publicKey,
+    false,
+    TOKEN_PROGRAM_ID
+  );
+  const contexts: Context[] = vaultsOf(book).map((vaultEntry) => {
+    const wrapper = vaultEntry.wrappers[0];
+    if (!wrapper) {
+      throw new Error(`vault ${vaultEntry.symbol} has no wrappers`);
+    }
+    const wrapperMint = new PublicKey(wrapper.mint);
+    return {
+      connection,
+      program,
+      book,
+      vaultEntry,
+      quoteUsdcPerShare: optionalNumber(
+        `KEEPER_QUOTE_${vaultEntry.symbol}`,
+        QUOTE_USDC_PER_SHARE
+      ),
+      keeper,
+      wrapper,
       wrapperMint,
-      keeper.publicKey,
-      false,
-      TOKEN_2022_PROGRAM_ID
-    ),
-  };
+      paymentMint,
+      vault: new PublicKey(vaultEntry.address),
+      receiptMint: new PublicKey(vaultEntry.receiptMint),
+      wrapperPda: new PublicKey(wrapper.wrapper),
+      vaultWrapperAccount: new PublicKey(wrapper.vaultTokenAccount),
+      keeperPaymentAccount,
+      keeperWrapperAccount: getAssociatedTokenAddressSync(
+        wrapperMint,
+        keeper.publicKey,
+        false,
+        TOKEN_2022_PROGRAM_ID
+      ),
+    };
+  });
 
   const activeOffset = offsetOfField(idl, "Schedule", "active");
 
   log("info", `keeper ${keeper.publicKey.toBase58()}`);
   log("info", `rpc ${RPC_URL}`);
   log("info", `program ${book.programId}`);
-  log("info", `vault ${book.vault.symbol} ${book.vault.address}`);
-  log("info", `delivering ${wrapper.label} ${wrapper.mint}`);
+  for (const ctx of contexts) {
+    log(
+      "info",
+      `vault ${ctx.vaultEntry.symbol} ${ctx.vault.toBase58()} delivering ` +
+        `${ctx.wrapper.label} ${ctx.wrapper.mint} at ${ctx.quoteUsdcPerShare} per share`
+    );
+  }
   log(
     "info",
     `polling every ${POLL_SECONDS}s, active flag at byte ${activeOffset}`
@@ -702,17 +737,19 @@ async function main(): Promise<void> {
       const tx = new Transaction().add(
         createAssociatedTokenAccountIdempotentInstruction(
           keeper.publicKey,
-          ctx.keeperPaymentAccount,
+          keeperPaymentAccount,
           keeper.publicKey,
           paymentMint,
           TOKEN_PROGRAM_ID
         ),
-        createAssociatedTokenAccountIdempotentInstruction(
-          keeper.publicKey,
-          ctx.keeperWrapperAccount,
-          keeper.publicKey,
-          wrapperMint,
-          TOKEN_2022_PROGRAM_ID
+        ...contexts.map((ctx) =>
+          createAssociatedTokenAccountIdempotentInstruction(
+            keeper.publicKey,
+            ctx.keeperWrapperAccount,
+            keeper.publicKey,
+            ctx.wrapperMint,
+            TOKEN_2022_PROGRAM_ID
+          )
         )
       );
       tx.recentBlockhash = undefined;
@@ -725,7 +762,7 @@ async function main(): Promise<void> {
 
   while (!stopping) {
     try {
-      await pollOnce(ctx, activeOffset);
+      await pollOnce(contexts, activeOffset);
     } catch (err) {
       // A poll that fails outright, usually the RPC being unreachable past
       // withRetry's attempts, is not fatal. Log it and try again next tick;

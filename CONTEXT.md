@@ -35,6 +35,34 @@ defaultAccountState(initialized), confidentialTransferMint,
 transferHook(programId null), tokenMetadata
 NOTE: no permanentDelegate on this mint, unlike NVDAx.
 
+## SPYx (Backed / xStocks), read at mainnet slot 448337989
+mint: XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W
+token program: TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb (Token-2022)
+decimals: 8
+scaledUiAmountConfig.multiplier: 1.003909240011759
+scaledUiAmountConfig.newMultiplier: 1.005714560286254
+newMultiplierEffectiveTimestamp: 1781755200 (in the past, so newMultiplier is live)
+extensions: metadataPointer, permanentDelegate, defaultAccountState,
+scaledUiAmountConfig, pausableConfig, confidentialTransferMint,
+transferHook, tokenMetadata
+NOTE: one wrapper only. There is no second SPY wrapper in this project.
+
+## Pyth price feeds, verified 2026-09-19
+Underlying equity feeds, not per wrapper feeds: a saver owns shares of the
+underlying whichever wrapper the vault holds. Verified by symbol against
+Hermes /v2/price_feeds (keyless), and on chain: the sponsored price account at
+the push oracle PDA for shard 0 holds this same feed id.
+Equity.US.NVDA/USD: b1073854ed24cbc755dc527418f52b7d271f6cc967bbf8d8129112b18860a593
+Equity.US.SPY/USD: 19e09bb805456ada3979a7d1cbb4b6d63babc3a0f8e8a9509f68afa5c4c11cd5
+schedule: America/New_York 0930-1600 weekdays, closed weekends and holidays.
+Outside those hours the latest price is the last close.
+NOT these, which share the naming pattern: Crypto.NVDAX/USD, Crypto.NVDAON/USD,
+Crypto.SPYX/USD (per wrapper), Equity.Index.NVDA/USD (a 24/7 index price).
+NOTE: since 2026-08-26 16:00 UTC Hermes price reads need an API key,
+Authorization: Bearer, base https://pyth.dourolabs.app/hermes. The sponsored
+on chain accounts for both feeds stopped updating at that time (mainnet last
+publish 2026-08-26T15:54:46Z, devnet 2026-07-02), so they are not a live source.
+
 ## The thesis
 Both tokens represent one share of NVIDIA. Their multipliers differ
 (1.001701196801074 vs 1.0017152487959897), so one raw unit of NVDAon carries

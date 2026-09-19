@@ -44,7 +44,9 @@ import {
 import {
   ADDRESS_BOOK_PATH,
   AddressBook,
+  ContextFacts,
   MintFacts,
+  VaultEntry,
   REPO_ROOT,
   WrapperEntry,
   currentMultiplierFixed,
@@ -55,15 +57,49 @@ import {
   withRetry,
 } from "./devnet-lib";
 
-const VAULT_SYMBOL = "NVDA";
+/**
+ * The vaults to build, and which CONTEXT.md mints each one accepts.
+ *
+ * displayName is what a person calls the thing. The vault symbol is a ticker
+ * for the underlying, but nobody saving five dollars a week thinks of
+ * themselves as buying NVDA, let alone NVDAx. It and the description live in
+ * the address book so the frontend carries no per asset knowledge and a new
+ * vault needs no frontend change. Neither may ever name a wrapper.
+ *
+ * The first entry is the one the address book's legacy `vault` and `wrappers`
+ * fields mirror, so it stays NVDA.
+ */
+const VAULT_SPECS: {
+  symbol: string;
+  displayName: string;
+  description: string;
+  /** The Pyth symbol for the underlying; its id comes from CONTEXT.md. */
+  priceFeed: string;
+  mints: (context: ContextFacts) => MintFacts[];
+}[] = [
+  {
+    symbol: "NVDA",
+    displayName: "NVIDIA",
+    description: "One company",
+    priceFeed: "Equity.US.NVDA/USD",
+    mints: (context) => [context.nvdax, context.nvdaon],
+  },
+  {
+    symbol: "SPY",
+    displayName: "S&P 500",
+    description: "500 of the largest US companies in one",
+    priceFeed: "Equity.US.SPY/USD",
+    mints: (context) => [context.spyx],
+  },
+];
 
 /**
- * What a person calls this thing. The vault symbol is a ticker for the
- * underlying, but nobody saving five dollars a week thinks of themselves as
- * buying NVDA, let alone NVDAx. It lives in the address book so the frontend
- * carries no per asset knowledge and a new vault needs no frontend change.
+ * Wrapper inventory the keeper is topped up to, per vault, in whole units of
+ * the wrapper it delivers. While the swap leg is the devnet substitute every
+ * execution is paid out of this, so a vault the keeper holds nothing of is a
+ * vault whose plans are skipped on every run.
  */
-const VAULT_DISPLAY_NAME = "NVIDIA";
+const KEEPER_INVENTORY_WHOLE = 100n;
 
 /**
  * Keeper fee for the demo vault: a quarter of a percent, but never less than
@@ -301,79 +337,136 @@ async function ensureMockMint(
   return { mint, liveMultiplier: live };
 }
 
-async function main(): Promise<void> {
-  const context = loadContext();
-  const provider = anchor.AnchorProvider.env();
-  anchor.setProvider(provider);
-  const connection = provider.connection;
+/**
+ * The keeper's public key, for stocking its inventory. Read from KEEPER_PUBKEY
+ * if set, otherwise from the keypair the keeper README has deployed out of
+ * .devnet-keys. Only the public half is used; setup never signs as the keeper.
+ * Null when neither is present, in which case stocking is skipped and said so.
+ */
+function keeperPublicKey(): PublicKey | null {
+  if (process.env.KEEPER_PUBKEY) {
+    return new PublicKey(process.env.KEEPER_PUBKEY);
+  }
+  const file = path.join(REPO_ROOT, ".devnet-keys", "keeper.json");
+  if (!fs.existsSync(file)) {
+    return null;
+  }
+  return Keypair.fromSecretKey(
+    Uint8Array.from(JSON.parse(fs.readFileSync(file, "utf8")))
+  ).publicKey;
+}
 
-  const idl = JSON.parse(
-    fs.readFileSync(path.join(REPO_ROOT, "target/idl/paritas.json"), "utf8")
-  );
-  const program = new Program(idl, provider) as Program<anchor.Idl>;
-
-  const wallet = (provider.wallet as anchor.Wallet).payer;
-  const owner = wallet.publicKey;
-
-  console.log(`Investire devnet setup`);
-  console.log(`  rpc            ${connection.rpcEndpoint}`);
-  console.log(`  wallet         ${owner.toBase58()}`);
-  console.log(`  program        ${program.programId.toBase58()}`);
-  console.log(`  devnet USDC    ${context.devnetUsdcMint.toBase58()}`);
-  console.log();
-
-  const balance = await withRetry("getBalance", () =>
-    connection.getBalance(owner)
-  );
-  if (balance < 1_000_000_000) {
+/**
+ * Confirms a price feed id from CONTEXT.md is the feed its symbol says, by
+ * asking Hermes' feed list, which is keyless. Guards against an id copied
+ * against the wrong line, or a wrapper feed standing in for the underlying:
+ * the symbol, the asset type and the id all have to agree.
+ */
+async function verifyPriceFeed(symbol: string, id: string): Promise<void> {
+  const ticker = symbol.split(".").pop()!.split("/")[0];
+  const url = `https://hermes.pyth.network/v2/price_feeds?query=${encodeURIComponent(
+    ticker
+  )}&asset_type=equity`;
+  const feeds = (await withRetry(`pyth feed list for ${ticker}`, async () => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Hermes feed list returned ${response.status}`);
+    }
+    return response.json();
+  })) as { id: string; attributes: { symbol: string } }[];
+  const match = feeds.find((feed) => feed.attributes.symbol === symbol);
+  if (!match) {
+    throw new Error(`Pyth has no feed named ${symbol}`);
+  }
+  if (match.id.replace(/^0x/, "") !== id) {
     throw new Error(
-      `wallet has ${
-        balance / 1e9
-      } SOL, which is not enough to create the demo accounts. ` +
-        "Run: solana airdrop 2 --url devnet"
+      `Pyth lists ${symbol} as ${match.id}, but CONTEXT.md says ${id}`
     );
   }
+  log("price feed", `verified ${symbol} ${id.slice(0, 8)}...`);
+}
 
-  // --- mock wrapper mints -------------------------------------------------
-  console.log("Mock wrapper mints (devnet has no real xStock or Ondo mints):");
-  const now = Math.floor(Date.now() / 1000);
-  const mintFacts = [context.nvdax, context.nvdaon];
+/**
+ * Tops a token account up to a target, minting only the shortfall, so reruns
+ * never inflate a balance without bound.
+ */
+async function topUp(
+  connection: Connection,
+  wallet: Keypair,
+  mint: PublicKey,
+  account: PublicKey,
+  facts: MintFacts,
+  whole: bigint,
+  who: string
+): Promise<void> {
+  const target = whole * pow10(facts.decimals);
+  const held = await tokenBalance(connection, account);
+  if (held >= target) {
+    log(
+      "balance",
+      `${who} already holds ${formatAmount(held, facts.decimals)} ${facts.label}`
+    );
+    return;
+  }
+  const shortfall = target - held;
+  await send(
+    connection,
+    `mint ${facts.label} to ${who}`,
+    new Transaction().add(
+      createMintToInstruction(
+        mint,
+        account,
+        wallet.publicKey,
+        shortfall,
+        [],
+        TOKEN_2022_PROGRAM_ID
+      )
+    ),
+    [wallet]
+  );
+  log(
+    "balance",
+    `minted ${formatAmount(shortfall, facts.decimals)} ${facts.label} to ${who}`
+  );
+}
+
+/**
+ * One vault end to end: its mock mints, the vault itself, each wrapper
+ * registered with the vault's holding account, test balances for the setup
+ * wallet, and keeper inventory of the wrapper the keeper delivers.
+ */
+async function ensureVault(params: {
+  connection: Connection;
+  program: Program<anchor.Idl>;
+  wallet: Keypair;
+  spec: (typeof VAULT_SPECS)[number];
+  facts: MintFacts[];
+  usdcDecimals: number;
+  keeper: PublicKey | null;
+  now: number;
+  priceFeeds: Record<string, string>;
+}): Promise<VaultEntry> {
+  const { connection, program, wallet, spec, facts, usdcDecimals, keeper, now } =
+    params;
+  const owner = wallet.publicKey;
+
+  console.log(`Vault ${spec.symbol}:`);
+  const feedId = params.priceFeeds[spec.priceFeed];
+  if (!feedId) {
+    throw new Error(`CONTEXT.md has no id for price feed ${spec.priceFeed}`);
+  }
+  await verifyPriceFeed(spec.priceFeed, feedId);
+  console.log("  Mock wrapper mints (devnet has no real xStock or Ondo mints):");
   const mints: PublicKey[] = [];
   const liveMultipliers: number[] = [];
-  for (const facts of mintFacts) {
-    const made = await ensureMockMint(connection, wallet, facts, now);
+  for (const fact of facts) {
+    const made = await ensureMockMint(connection, wallet, fact, now);
     mints.push(made.mint);
     liveMultipliers.push(made.liveMultiplier);
   }
-  console.log();
 
-  // --- payment mint -------------------------------------------------------
-  // Real devnet USDC from CONTEXT.md, not a mock. It is classic SPL Token
-  // while the wrappers are Token-2022, which is exactly the two token program
-  // split the execution instructions are built around, so mocking it would
-  // quietly remove the thing worth testing.
-  console.log("Payment mint:");
-  const usdcInfo = await withRetry("read devnet USDC mint", () =>
-    connection.getAccountInfo(context.devnetUsdcMint)
-  );
-  if (!usdcInfo) {
-    throw new Error(
-      `devnet USDC ${context.devnetUsdcMint.toBase58()} does not exist on this cluster`
-    );
-  }
-  if (!usdcInfo.owner.equals(TOKEN_PROGRAM_ID)) {
-    throw new Error(
-      `devnet USDC is owned by ${usdcInfo.owner.toBase58()}, expected the classic SPL Token program`
-    );
-  }
-  const usdc = unpackMint(context.devnetUsdcMint, usdcInfo, TOKEN_PROGRAM_ID);
-  log("usdc", `${context.devnetUsdcMint.toBase58()} decimals ${usdc.decimals}`);
-  console.log();
-
-  // --- vault --------------------------------------------------------------
-  console.log(`Vault ${VAULT_SYMBOL}:`);
   const [vaultPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("vault"), Buffer.from(VAULT_SYMBOL)],
+    [Buffer.from("vault"), Buffer.from(spec.symbol)],
     program.programId
   );
   const [receiptMintPda] = PublicKey.findProgramAddressSync(
@@ -384,7 +477,7 @@ async function main(): Promise<void> {
   if (!(await accountExists(connection, vaultPda))) {
     await program.methods
       .initVault(
-        VAULT_SYMBOL,
+        spec.symbol,
         owner,
         KEEPER_FEE_BPS,
         new BN(KEEPER_FEE_MIN.toString())
@@ -412,7 +505,7 @@ async function main(): Promise<void> {
   };
   if (!vaultAccount.tokenProgram.equals(TOKEN_2022_PROGRAM_ID)) {
     throw new Error(
-      `vault ${VAULT_SYMBOL} was created under ${vaultAccount.tokenProgram.toBase58()}, ` +
+      `vault ${spec.symbol} was created under ${vaultAccount.tokenProgram.toBase58()}, ` +
         "not Token-2022, so it cannot accept these wrappers. Choose a new symbol."
     );
   }
@@ -421,17 +514,14 @@ async function main(): Promise<void> {
     "keeper fee",
     `${vaultAccount.keeperFeeBps} bps, minimum ${formatAmount(
       BigInt(vaultAccount.keeperFeeMin.toString()),
-      usdc.decimals
+      usdcDecimals
     )} USDC`
   );
-  console.log();
 
-  // --- wrappers, token accounts, test balances ----------------------------
-  console.log("Wrappers:");
   const wrappers: WrapperEntry[] = [];
   for (let i = 0; i < mints.length; i++) {
     const mint = mints[i];
-    const facts = mintFacts[i];
+    const fact = facts[i];
 
     const [wrapperPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("wrapper"), vaultPda.toBuffer(), mint.toBuffer()],
@@ -451,9 +541,9 @@ async function main(): Promise<void> {
           systemProgram: SystemProgram.programId,
         })
         .rpc();
-      log("wrapper", `registered ${facts.label} ${wrapperPda.toBase58()}`);
+      log("wrapper", `registered ${fact.label} ${wrapperPda.toBase58()}`);
     } else {
-      log("wrapper", `reusing ${facts.label} ${wrapperPda.toBase58()}`);
+      log("wrapper", `reusing ${fact.label} ${wrapperPda.toBase58()}`);
     }
 
     // The vault's own holding account. settle_execution sweeps the execution
@@ -488,64 +578,175 @@ async function main(): Promise<void> {
         TOKEN_2022_PROGRAM_ID
       )
     );
-    await send(connection, `token accounts for ${facts.label}`, setup, [
-      wallet,
-    ]);
+    await send(connection, `token accounts for ${fact.label}`, setup, [wallet]);
 
-    // Top the wallet up to the test balance rather than minting a fixed amount
-    // every run, so reruns do not inflate it without bound.
-    const target = WRAPPER_TEST_BALANCE_WHOLE * pow10(facts.decimals);
-    const held = await tokenBalance(connection, ownerTokenAccount);
-    if (held < target) {
-      const topUp = target - held;
-      await send(
-        connection,
-        `mint test ${facts.label}`,
-        new Transaction().add(
-          createMintToInstruction(
-            mint,
-            ownerTokenAccount,
-            owner,
-            topUp,
-            [],
-            TOKEN_2022_PROGRAM_ID
-          )
-        ),
-        [wallet]
-      );
-      log(
-        "balance",
-        `minted ${formatAmount(topUp, facts.decimals)} ${
-          facts.label
-        } to the wallet`
-      );
-    } else {
-      log(
-        "balance",
-        `wallet already holds ${formatAmount(held, facts.decimals)} ${
-          facts.label
-        }`
-      );
+    await topUp(
+      connection,
+      wallet,
+      mint,
+      ownerTokenAccount,
+      fact,
+      WRAPPER_TEST_BALANCE_WHOLE,
+      "the wallet"
+    );
+
+    // The keeper delivers the vault's first wrapper (keeper/index.ts), so that
+    // is the one it needs inventory of.
+    if (i === 0) {
+      if (keeper) {
+        const keeperAccount = getAssociatedTokenAddressSync(
+          mint,
+          keeper,
+          false,
+          TOKEN_2022_PROGRAM_ID
+        );
+        await send(
+          connection,
+          `keeper ${fact.label} account`,
+          new Transaction().add(
+            createAssociatedTokenAccountIdempotentInstruction(
+              owner,
+              keeperAccount,
+              keeper,
+              mint,
+              TOKEN_2022_PROGRAM_ID
+            )
+          ),
+          [wallet],
+          true
+        );
+        await topUp(
+          connection,
+          wallet,
+          mint,
+          keeperAccount,
+          fact,
+          KEEPER_INVENTORY_WHOLE,
+          "the keeper"
+        );
+      } else {
+        log(
+          "keeper",
+          "no KEEPER_PUBKEY and no .devnet-keys/keeper.json, inventory not stocked"
+        );
+      }
     }
 
     wrappers.push({
-      label: facts.label,
+      label: fact.label,
       mint: mint.toBase58(),
-      decimals: facts.decimals,
+      decimals: fact.decimals,
       wrapper: wrapperPda.toBase58(),
       vaultTokenAccount: vaultTokenAccount.toBase58(),
       ownerTokenAccount: ownerTokenAccount.toBase58(),
       liveMultiplier: liveMultipliers[i],
       mainnet: {
-        mint: facts.mainnetMint,
-        multiplier: facts.multiplier,
-        newMultiplier: facts.newMultiplier,
-        newMultiplierEffectiveTimestamp: facts.newMultiplierEffectiveTimestamp,
+        mint: fact.mainnetMint,
+        multiplier: fact.multiplier,
+        newMultiplier: fact.newMultiplier,
+        newMultiplierEffectiveTimestamp: fact.newMultiplierEffectiveTimestamp,
         liveMultiplier: liveMultipliers[i],
       },
     });
   }
   console.log();
+
+  return {
+    symbol: spec.symbol,
+    displayName: spec.displayName,
+    description: spec.description,
+    address: vaultPda.toBase58(),
+    receiptMint: receiptMintPda.toBase58(),
+    receiptDecimals: 9,
+    tokenProgram: TOKEN_2022_PROGRAM_ID.toBase58(),
+    authority: vaultAccount.authority.toBase58(),
+    keeperFeeBps: vaultAccount.keeperFeeBps,
+    keeperFeeMin: vaultAccount.keeperFeeMin.toString(),
+    wrappers,
+    priceFeed: { symbol: spec.priceFeed, id: feedId },
+    ownerReceiptAccount: getAssociatedTokenAddressSync(
+      receiptMintPda,
+      owner,
+      false,
+      TOKEN_2022_PROGRAM_ID
+    ).toBase58(),
+  };
+}
+
+async function main(): Promise<void> {
+  const context = loadContext();
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
+  const connection = provider.connection;
+
+  const idl = JSON.parse(
+    fs.readFileSync(path.join(REPO_ROOT, "target/idl/paritas.json"), "utf8")
+  );
+  const program = new Program(idl, provider) as Program<anchor.Idl>;
+
+  const wallet = (provider.wallet as anchor.Wallet).payer;
+  const owner = wallet.publicKey;
+
+  console.log(`Investire devnet setup`);
+  console.log(`  rpc            ${connection.rpcEndpoint}`);
+  console.log(`  wallet         ${owner.toBase58()}`);
+  console.log(`  program        ${program.programId.toBase58()}`);
+  console.log(`  devnet USDC    ${context.devnetUsdcMint.toBase58()}`);
+  console.log();
+
+  const balance = await withRetry("getBalance", () =>
+    connection.getBalance(owner)
+  );
+  if (balance < 1_000_000_000) {
+    throw new Error(
+      `wallet has ${
+        balance / 1e9
+      } SOL, which is not enough to create the demo accounts. ` +
+        "Run: solana airdrop 2 --url devnet"
+    );
+  }
+
+  // --- payment mint -------------------------------------------------------
+  // Real devnet USDC from CONTEXT.md, not a mock. It is classic SPL Token
+  // while the wrappers are Token-2022, which is exactly the two token program
+  // split the execution instructions are built around, so mocking it would
+  // quietly remove the thing worth testing.
+  console.log("Payment mint:");
+  const usdcInfo = await withRetry("read devnet USDC mint", () =>
+    connection.getAccountInfo(context.devnetUsdcMint)
+  );
+  if (!usdcInfo) {
+    throw new Error(
+      `devnet USDC ${context.devnetUsdcMint.toBase58()} does not exist on this cluster`
+    );
+  }
+  if (!usdcInfo.owner.equals(TOKEN_PROGRAM_ID)) {
+    throw new Error(
+      `devnet USDC is owned by ${usdcInfo.owner.toBase58()}, expected the classic SPL Token program`
+    );
+  }
+  const usdc = unpackMint(context.devnetUsdcMint, usdcInfo, TOKEN_PROGRAM_ID);
+  log("usdc", `${context.devnetUsdcMint.toBase58()} decimals ${usdc.decimals}`);
+  console.log();
+
+  const now = Math.floor(Date.now() / 1000);
+  const keeper = keeperPublicKey();
+  const vaults: VaultEntry[] = [];
+  for (const spec of VAULT_SPECS) {
+    vaults.push(
+      await ensureVault({
+        connection,
+        program,
+        wallet,
+        spec,
+        facts: spec.mints(context),
+        usdcDecimals: usdc.decimals,
+        keeper,
+        now,
+        priceFeeds: context.priceFeeds,
+      })
+    );
+  }
 
   // --- the owner's own accounts -------------------------------------------
   console.log("Owner accounts:");
@@ -554,12 +755,6 @@ async function main(): Promise<void> {
     owner,
     false,
     TOKEN_PROGRAM_ID
-  );
-  const ownerReceiptAccount = getAssociatedTokenAddressSync(
-    receiptMintPda,
-    owner,
-    false,
-    TOKEN_2022_PROGRAM_ID
   );
   await send(
     connection,
@@ -572,19 +767,23 @@ async function main(): Promise<void> {
         context.devnetUsdcMint,
         TOKEN_PROGRAM_ID
       ),
-      createAssociatedTokenAccountIdempotentInstruction(
-        owner,
-        ownerReceiptAccount,
-        owner,
-        receiptMintPda,
-        TOKEN_2022_PROGRAM_ID
+      ...vaults.map((vault) =>
+        createAssociatedTokenAccountIdempotentInstruction(
+          owner,
+          new PublicKey(vault.ownerReceiptAccount),
+          owner,
+          new PublicKey(vault.receiptMint),
+          TOKEN_2022_PROGRAM_ID
+        )
       )
     ),
     [wallet],
     true // createAssociatedTokenAccountIdempotent only, safe to replay
   );
   log("usdc account", ownerPaymentAccount.toBase58());
-  log("receipt acct", ownerReceiptAccount.toBase58());
+  for (const vault of vaults) {
+    log("receipt acct", `${vault.symbol} ${vault.ownerReceiptAccount}`);
+  }
 
   const usdcHeld = await tokenBalance(connection, ownerPaymentAccount);
   log("usdc balance", `${formatAmount(usdcHeld, usdc.decimals)} USDC`);
@@ -605,22 +804,25 @@ async function main(): Promise<void> {
       decimals: usdc.decimals,
       tokenProgram: TOKEN_PROGRAM_ID.toBase58(),
     },
+    // The single vault layout, mirroring vaults[0], for anything not yet
+    // reading `vaults`. See AddressBook.vaults.
     vault: {
-      symbol: VAULT_SYMBOL,
-      displayName: VAULT_DISPLAY_NAME,
-      address: vaultPda.toBase58(),
-      receiptMint: receiptMintPda.toBase58(),
-      receiptDecimals: 9,
-      tokenProgram: TOKEN_2022_PROGRAM_ID.toBase58(),
-      authority: vaultAccount.authority.toBase58(),
-      keeperFeeBps: vaultAccount.keeperFeeBps,
-      keeperFeeMin: vaultAccount.keeperFeeMin.toString(),
+      symbol: vaults[0].symbol,
+      displayName: vaults[0].displayName,
+      address: vaults[0].address,
+      receiptMint: vaults[0].receiptMint,
+      receiptDecimals: vaults[0].receiptDecimals,
+      tokenProgram: vaults[0].tokenProgram,
+      authority: vaults[0].authority,
+      keeperFeeBps: vaults[0].keeperFeeBps,
+      keeperFeeMin: vaults[0].keeperFeeMin,
     },
-    wrappers,
+    wrappers: vaults[0].wrappers,
+    vaults,
     owner: {
       address: owner.toBase58(),
       paymentAccount: ownerPaymentAccount.toBase58(),
-      receiptAccount: ownerReceiptAccount.toBase58(),
+      receiptAccount: vaults[0].ownerReceiptAccount,
     },
     // Seed strings, so a client deriving a PDA does not have to keep its own
     // copy of them in sync with state.rs.
@@ -637,7 +839,7 @@ async function main(): Promise<void> {
 
   console.log(`Wrote ${ADDRESS_BOOK_PATH}`);
   if (previous && previous.vault.address !== book.vault.address) {
-    console.log("  note: the vault address changed since the last run");
+    console.log("  note: the first vault's address changed since the last run");
   }
   if (usdcHeld === 0n) {
     console.log();

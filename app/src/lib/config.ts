@@ -16,6 +16,24 @@ export interface Wrapper {
   ownerTokenAccount: string;
 }
 
+export interface VaultEntry {
+  symbol: string;
+  displayName: string;
+  description: string;
+  address: string;
+  receiptMint: string;
+  receiptDecimals: number;
+  tokenProgram: string;
+  keeperFeeBps: number;
+  keeperFeeMin: string;
+  wrappers: Wrapper[];
+  /**
+   * The Pyth feed for the underlying (Equity.US.NVDA/USD), never a wrapper's.
+   * Absent in an address book written before prices were added.
+   */
+  priceFeed?: { symbol: string; id: string };
+}
+
 export interface AddressBook {
   cluster: string;
   programId: string;
@@ -33,11 +51,40 @@ export interface AddressBook {
     keeperFeeMin: string;
   };
   wrappers: Wrapper[];
+  /** Absent in an address book written before there was a second vault. */
+  vaults?: VaultEntry[];
   owner: { address: string; paymentAccount: string; receiptAccount: string };
   seeds: Record<string, string>;
 }
 
 export const ADDRESS_BOOK = book as AddressBook;
+
+/**
+ * What a saver can own, one per vault. Everything here that reaches the screen
+ * is displayName and description: an asset is NVIDIA or the S&P 500, never
+ * the wrapper tokens behind it, which are only ever used to build
+ * transactions.
+ *
+ * An address book from before `vaults` existed is read as its single vault,
+ * so the app keeps working against one that has not been rebuilt.
+ */
+export const ASSETS: VaultEntry[] = ADDRESS_BOOK.vaults?.length
+  ? ADDRESS_BOOK.vaults
+  : [
+      {
+        ...ADDRESS_BOOK.vault,
+        description: "",
+        wrappers: ADDRESS_BOOK.wrappers,
+      },
+    ];
+
+export function assetBySymbol(symbol: string): VaultEntry {
+  const asset = ASSETS.find((entry) => entry.symbol === symbol);
+  if (!asset) {
+    throw new Error(`no asset ${symbol} in the address book`);
+  }
+  return asset;
+}
 export const PARITAS_IDL = idl;
 
 /**
@@ -84,7 +131,25 @@ export function resolveRpcEndpoint(): string {
   return `${window.location.origin}/api/rpc`;
 }
 
-/** Amounts offered on the create screen, in whole units of the payment mint. */
+/**
+ * Quick picks on the plan screen, in whole units of the payment mint. Any other
+ * amount can be typed; these are shortcuts, not the menu.
+ */
 export const AMOUNT_PRESETS = [5, 10, 25];
 
-export const WEEK_SECONDS = 7 * 24 * 60 * 60;
+export const DAY_SECONDS = 24 * 60 * 60;
+export const WEEK_SECONDS = 7 * DAY_SECONDS;
+
+/**
+ * A month is 30 days. The program stores cadence as a fixed number of seconds
+ * and has no calendar, so a "monthly" plan cannot land on the same date each
+ * month. The copy says "every 30 days" wherever the exact rhythm matters,
+ * rather than promising the 1st and delivering the 31st, then the 30th.
+ */
+export const MONTH_SECONDS = 30 * DAY_SECONDS;
+
+export const CADENCES = [
+  { label: "Daily", seconds: DAY_SECONDS },
+  { label: "Weekly", seconds: WEEK_SECONDS },
+  { label: "Monthly", seconds: MONTH_SECONDS },
+] as const;

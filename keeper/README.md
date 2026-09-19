@@ -49,8 +49,13 @@ All from the environment. Nothing is committed.
 | `PARITAS_ADDRESS_BOOK` | no | `./devnet.json` | Address book from `scripts/setup-devnet.ts` |
 | `PARITAS_IDL` | no | `./target/idl/paritas.json` | Anchor IDL |
 | `KEEPER_POLL_SECONDS` | no | `60` | Poll interval |
-| `KEEPER_WRAPPER` | no | first in the address book | Which wrapper to deliver |
 | `KEEPER_QUOTE_USDC_PER_SHARE` | no | `5` | Stands in for a Jupiter quote |
+| `KEEPER_QUOTE_<SYMBOL>` | no | the above | Per vault override, e.g. `KEEPER_QUOTE_SPY` |
+
+Every vault in the address book is served, each delivering its own first
+wrapper. `scripts/setup-devnet.ts` stocks the keeper with 100 of each, reading
+the keeper's public key from `KEEPER_PUBKEY` or `.devnet-keys/keeper.json`.
+`KEEPER_WRAPPER` is no longer read.
 | `KEEPER_COMPUTE_UNIT_LIMIT` | no | `400000` | Introspection plus several CPIs |
 
 No addresses are configured. They all come from the address book.

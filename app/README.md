@@ -1,6 +1,9 @@
 # Investire
 
-A savings app. You put in a few dollars a week and you own shares.
+A savings app. You put in a few dollars a day, a week or a month and you own
+shares of the companies you believe in. Two assets are live, NVIDIA and the
+S&P 500, one vault each; the list on screen comes from the address book, so
+a third is a new vault and a `setup-devnet.ts` entry, not a frontend change.
 
 Next.js App Router, Tailwind, Motion, deployable to Vercel.
 
@@ -49,13 +52,87 @@ the whole of it.
 ## Three taps
 
 1. Start saving
-2. Pick an amount
+2. Pick what to own, an amount, and how often: daily, weekly, or every 30 days
 3. Confirm
 
+Any amount can be typed; the chips are shortcuts. The screen checks the
+program's own floors before the wallet is asked (the smallest plan is the
+larger of one dollar and the amount whose capped keeper fee covers the vault's
+minimum), so a plan that is too small is a sentence on screen and not a failed
+transaction. A monthly plan is 30 days, because the program stores cadence in
+seconds and has no calendar.
+
 One wallet approval, because creating the plan and funding it are instructions
-in a single transaction. Stopping is one tap and one approval, and revokes the
-delegation in the same transaction so nothing can move your money afterwards
+in a single transaction. Stopping is a tap, a soft confirm and one approval,
+and revokes the delegation in the same transaction so nothing can move your money afterwards
 even if the program were wrong about that.
+
+## What the app can take
+
+A plan is funded for 12 buys at its amount, whatever the cadence, and not a
+cent more. The plan card shows the live allowance read off your dollar
+account, how many buys it covers and the date of the last one. When it runs
+out the plan pauses and says so, with one tap to allow 12 more.
+
+## Stopping
+
+Stop is on the plan card itself, never behind the detail view. It asks once,
+softly, so a stray thumb does not end a habit, and then cancels the plan and
+revokes the permission in the same transaction. Nothing is locked.
+
+## Taking shares out
+
+"Take out", next to the shares figure, burns receipt tokens and pays out the
+same number of shares as wrapper tokens in the saver's own wallet. Amounts are
+in shares; nothing is sold, and there is no price on chain to turn shares into
+dollars honestly, so the screen does not try.
+
+Which wrapper pays is decided by `planPayout` in `src/lib/paritas.ts` and never
+shown: the one holding the most, if it covers the whole amount, otherwise a
+split across wrappers in one transaction. The preview repeats the program's
+integer conversion exactly, so the number on the button is the number that
+lands; `npm run verify` checks that to the raw unit. If the vault as a whole
+cannot pay, the screen says how much it can, before any transaction.
+
+## The dashboard
+
+Shares owned stays the hero: it only moves when the saver buys or takes out,
+never with the market. Under it, "Worth today" gives the value at the latest
+price, what was put in, and the change in dollars and percent. The change is
+a word, "Up" or "Down", in the same ink either way. Nothing turns red, the card
+looks the same on a green day and a red one, and its one reassuring line is
+always there rather than appearing when prices fall.
+
+Prices are Pyth's underlying equity feeds, `Equity.US.NVDA/USD` and
+`Equity.US.SPY/USD`, never the per wrapper feeds. The ids are verified in
+CONTEXT.md and again by `setup-devnet.ts` against Pyth's feed list, then
+carried in the address book. `/api/prices` reads them server side with
+`PYTH_API_KEY`; since 2026-08-26 Hermes has no keyless price reads, and the
+sponsored on chain accounts for these feeds stopped updating that day. The
+feeds follow US market hours, so every value carries its age ("Prices as of
+Fri 4:00 PM").
+
+"Put in" is at average cost for the shares still held, so taking half the
+shares out halves it rather than showing a loss. Shares added outside any plan
+have no cost on chain; they count toward value and are left out of the change,
+and the card says so. `src/lib/portfolio.ts` has all of it, in integer math.
+
+The streak is consecutive buys, from chain history: the successful
+transactions on each plan's execution receipt address, which nothing but that
+plan's buys touches (`npm run verify` checks this against every plan's own
+count). A buy counts as consecutive unless a whole period was missed before
+it, and the streak ends once the live plan is a whole period overdue.
+
+## Changing a plan
+
+There is no update instruction. Changing a plan cancels it and creates a new
+one, funded afresh, in one transaction, and can move a plan to the other
+asset the same way. A new amount needs a new approval anyway, and one
+transaction means there is never a moment with two plans live or none. The next buy keeps its date, pulled in if the new cadence is shorter.
+
+Each change leaves the old plan's account in place (cancel does not close it)
+and uses the next plan slot, so it costs account rent that is not returned,
+and an owner has 256 slots in total on a vault.
 
 ## Running it
 
@@ -79,7 +156,9 @@ ANCHOR_WALLET=~/.config/solana/id.json npm run verify
 
 It exercises every function the UI calls, in the order the UI calls them:
 load plans, read holdings, check the funding block, cancel, create, re-read,
-and assert the delegation landed and now blocks a second plan. It also asserts
+and assert the delegation landed and now blocks a second plan. Then it moves
+the plan to the second asset, and takes 0.1 of a share out, checking the
+wallet received exactly the raw amount the preview computed. It also asserts
 the headline sentence contains no wrapper name, multiplier or basis point.
 
 What that leaves untested is the wallet adapter handing back a signature.
@@ -93,6 +172,8 @@ Set the project's **Root Directory** to `app`. Vercel clones the whole repo, so
 | --- | --- | --- | --- |
 | `RPC_URL` | yes | server only | The real RPC endpoint. Never reaches the browser. |
 | `NEXT_PUBLIC_RPC_URL` | no | **public** | Bypasses the proxy and connects direct. Only for an endpoint with no key in it. |
+| `PYTH_API_KEY` | for prices | server only | Pyth Hermes key, sent as `Authorization: Bearer`. Without it the dashboard shows shares and money put in, and says today's value is unavailable. |
+| `PYTH_HERMES_URL` | no | server only | Defaults to `https://pyth.dourolabs.app/hermes`. |
 
 ### Why the key is not a `NEXT_PUBLIC_` variable
 

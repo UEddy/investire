@@ -15,13 +15,34 @@ import { AnchorProvider, Idl, Wallet } from "@coral-xyz/anchor";
 import {
   Connection,
   Keypair,
+  PublicKey,
   Transaction,
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
-import { ADDRESS_BOOK, WEEK_SECONDS } from "../src/lib/config";
 import {
+  TOKEN_2022_PROGRAM_ID,
+  getAccount,
+  getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
+import {
+  ADDRESS_BOOK,
+  ASSETS,
+  MONTH_SECONDS,
+  WEEK_SECONDS,
+  assetBySymbol,
+} from "../src/lib/config";
+import {
+  RUNS_FUNDED,
   buildCancelPlanTransaction,
+  buildChangePlanTransaction,
   buildCreatePlanTransaction,
+  buildWithdrawTransaction,
+  loadExecutions,
+  loadFunding,
+  loadPayoutSources,
+  planPayout,
+  loadPlanLimits,
+  planProblem,
   checkFundingBlock,
   getProgram,
   loadHoldings,
@@ -112,7 +133,10 @@ async function main(): Promise<void> {
 
   console.log(`saver   ${owner.toBase58()}`);
   console.log(`rpc     ${RPC_URL}`);
-  console.log(`vault   ${ADDRESS_BOOK.vault.displayName}`);
+  console.log(`assets  ${ASSETS.map((asset) => asset.displayName).join(", ")}`);
+  if (ASSETS.length !== 2) {
+    fail(`expected two assets in the address book, found ${ASSETS.length}`);
+  }
   console.log();
 
   // --- what the home screen reads ----------------------------------------
@@ -120,14 +144,33 @@ async function main(): Promise<void> {
   ok(`loadPlans found ${plans.length} plan(s)`);
 
   const holdings = await loadHoldings(connection, owner, plans);
+  const sharesLine = ASSETS.map(
+    (asset) =>
+      `${formatShares(holdings.shares[asset.symbol] ?? 0n, asset.receiptDecimals)} ${asset.displayName}`,
+  ).join(", ");
   ok(
-    `holdings: ${formatShares(holdings.shares, ADDRESS_BOOK.vault.receiptDecimals)} shares, ` +
+    `holdings: ${sharesLine}, ` +
       `${formatMoney(holdings.cash, ADDRESS_BOOK.payment.decimals)} to save with, ` +
       `${formatMoney(holdings.invested, ADDRESS_BOOK.payment.decimals)} invested`,
   );
   if (!holdings.hasPaymentAccount) {
     fail("the saver has no dollar account; the app would show its add funds state");
   }
+
+  // --- buy history behind the streak --------------------------------------
+  // The streak reads buy times off each plan's execution receipt address, on
+  // the claim that its successful transactions are exactly that plan's buys.
+  // The schedule keeps its own count, so the claim can be checked against it.
+  const history = await loadExecutions(connection, plans);
+  for (const plan of plans) {
+    const found = history.filter((each) => each.plan === plan.address).length;
+    if (found !== plan.executions) {
+      fail(
+        `plan ${plan.address} counts ${plan.executions} buys but history shows ${found}`,
+      );
+    }
+  }
+  ok(`buy history matches every plan's own count (${history.length} buys)`);
 
   // --- the constraint that shapes the create screen -----------------------
   const blockBefore = await checkFundingBlock(connection, owner, plans);
@@ -146,7 +189,7 @@ async function main(): Promise<void> {
     const tx = await buildCancelPlanTransaction({
       program,
       owner,
-      planAddress: schedulePda(owner, plan.index),
+      planAddress: schedulePda(owner, assetBySymbol(plan.asset), plan.index),
     });
     await send(connection, `cancel plan ${plan.index}`, tx, keypair);
     ok(`cancelled the existing plan at index ${plan.index}`);
@@ -196,8 +239,8 @@ async function main(): Promise<void> {
   const sentence =
     `You save ${formatMoneyShort(created.amount, ADDRESS_BOOK.payment.decimals)} ` +
     `${cadencePhrase(created.cadenceSeconds, created.nextDueTs)}. ` +
-    `You own ${formatShares(holdings.shares, ADDRESS_BOOK.vault.receiptDecimals)} ` +
-    `shares of ${ADDRESS_BOOK.vault.displayName}.`;
+    `You own ${formatShares(holdings.shares[created.asset] ?? 0n, ASSETS[0].receiptDecimals)} ` +
+    `shares of ${assetBySymbol(created.asset).displayName}.`;
   ok(`headline: "${sentence}"`);
   ok(`next run reads as "${whenNext(created.nextDueTs)}"`);
 
@@ -217,6 +260,160 @@ async function main(): Promise<void> {
     fail(`a second plan should be blocked by the first, got ${blockAfter.kind}`);
   }
   ok("a second plan is blocked, naming the plan holding the delegation");
+
+  // --- validation before the wallet is asked ------------------------------
+  const limits = await loadPlanLimits(program, ASSETS[0]);
+  const tooSmall = planProblem({
+    amount: limits.minAmount - 1n,
+    cadenceSeconds: WEEK_SECONDS,
+    limits,
+    cash: 1n << 62n,
+    moneyDecimals: ADDRESS_BOOK.payment.decimals,
+  });
+  if (!tooSmall) {
+    fail("an amount one unit below the program's floor passed validation");
+  }
+  ok(`below the floor reads as "${tooSmall}"`);
+
+  // --- change the plan: cancel plus recreate, one transaction -------------
+  // Onto the second asset, so the change also proves a plan can move vaults.
+  const spy = ASSETS[1];
+  const changedAmount = 7_500_000n; // a typed amount, not a preset
+  const change = await buildChangePlanTransaction({
+    program,
+    owner,
+    plan: created,
+    asset: spy,
+    amount: changedAmount,
+    cadenceSeconds: MONTH_SECONDS,
+    plans,
+  });
+  if (change.transaction.instructions.length !== 4) {
+    fail(
+      `change should be one transaction of 4 instructions, got ${change.transaction.instructions.length}`,
+    );
+  }
+  await send(connection, "change plan", change.transaction, keypair);
+  ok(`changed plan to ${change.planAddress.toBase58()} at index ${change.index}`);
+
+  plans = await loadPlans(program, owner);
+  const old = plans.find((plan) => plan.address === planAddress.toBase58());
+  const replacement = plans.find(
+    (plan) => plan.address === change.planAddress.toBase58(),
+  );
+  if (!old || old.active) {
+    fail("the replaced plan is still active");
+  }
+  if (!replacement?.active) {
+    fail("the replacement plan is not active");
+  }
+  if (plans.filter((plan) => plan.active).length !== 1) {
+    fail("more than one plan is active after a change");
+  }
+  if (
+    replacement.amount !== changedAmount ||
+    replacement.cadenceSeconds !== MONTH_SECONDS ||
+    replacement.asset !== spy.symbol
+  ) {
+    fail("the replacement plan does not carry the new asset, amount and cadence");
+  }
+  if (replacement.nextDueTs > created.nextDueTs && created.nextDueTs > Date.now() / 1000) {
+    fail("changing the plan pushed the next buy later than it was");
+  }
+  ok(`exactly one plan is active, now buying ${spy.displayName} with the new amount and cadence`);
+
+  const funding = await loadFunding(connection, owner);
+  if (funding.delegate !== change.planAddress.toBase58()) {
+    fail(`delegate is ${funding.delegate}, expected the replacement plan`);
+  }
+  if (funding.delegatedAmount !== changedAmount * BigInt(RUNS_FUNDED)) {
+    fail(
+      `allowance is ${funding.delegatedAmount}, expected ${changedAmount * BigInt(RUNS_FUNDED)}`,
+    );
+  }
+  ok(`the delegation moved to the replacement, allowing ${RUNS_FUNDED} buys and no more`);
+
+  // --- taking shares out ---------------------------------------------------
+  const nvda = ASSETS[0];
+  const heldBefore = (await loadHoldings(connection, owner, plans)).shares[nvda.symbol] ?? 0n;
+  if (heldBefore === 0n) {
+    fail(`the saver holds no ${nvda.displayName} to test taking out with`);
+  }
+  const sources = await loadPayoutSources(connection, nvda);
+  const available = sources.reduce((sum, source) => sum + source.vaultBalance, 0n);
+  if (available === 0n) {
+    fail("the vault holds nothing to pay a withdrawal from");
+  }
+
+  // Asking for more than every wrapper together holds must come back as a
+  // plain answer, never as a transaction.
+  const huge = planPayout(1n << 60n, sources);
+  if (huge.kind !== "short") {
+    fail("an impossible withdrawal was planned as if it could be paid");
+  }
+  ok("more than the vault holds is refused before any transaction");
+
+  const takeOut = 100_000_000n; // 0.1 of a share
+  const quoted = planPayout(takeOut, sources);
+  if (quoted.kind !== "ok") {
+    fail(`0.1 shares could not be planned: ${quoted.kind}`);
+  }
+  const withdrawal = await buildWithdrawTransaction({
+    program,
+    owner,
+    asset: nvda,
+    shares: takeOut,
+  });
+
+  // What actually lands in the wallet, per wrapper, against what the preview's
+  // copy of the program's math said would. The preview is only worth showing
+  // if these agree to the raw unit.
+  const walletBalance = async (mint: string) => {
+    try {
+      const account = await getAccount(
+        connection,
+        getAssociatedTokenAddressSync(
+          new PublicKey(mint),
+          owner,
+          false,
+          TOKEN_2022_PROGRAM_ID,
+        ),
+        "confirmed",
+        TOKEN_2022_PROGRAM_ID,
+      );
+      return account.amount;
+    } catch {
+      return 0n;
+    }
+  };
+  const before = await Promise.all(
+    quoted.legs.map((leg) => walletBalance(leg.source.wrapper.mint)),
+  );
+  await send(connection, "withdraw", withdrawal.transaction, keypair);
+  const after = await Promise.all(
+    quoted.legs.map((leg) => walletBalance(leg.source.wrapper.mint)),
+  );
+  quoted.legs.forEach((leg, i) => {
+    if (after[i] - before[i] !== leg.rawOut) {
+      fail(
+        `wallet received ${after[i] - before[i]} raw units, the preview's math said ${leg.rawOut}`,
+      );
+    }
+  });
+  ok(`the wallet received exactly the raw amount the preview computed, over ${quoted.legs.length} leg(s)`);
+
+  const heldAfter = (await loadHoldings(connection, owner, plans)).shares[nvda.symbol] ?? 0n;
+  if (heldBefore - heldAfter !== takeOut) {
+    fail(`savings fell by ${heldBefore - heldAfter}, expected ${takeOut}`);
+  }
+  ok(
+    `took out ${formatShares(takeOut, nvda.receiptDecimals)} shares, ` +
+      `${formatShares(withdrawal.received, nvda.receiptDecimals)} landed, ` +
+      `preview said ${formatShares(quoted.received, nvda.receiptDecimals)}`,
+  );
+  if (withdrawal.received !== quoted.received) {
+    fail("what landed differs from what the preview promised");
+  }
 
   // --- the copy rule ------------------------------------------------------
   const forbidden = ["NVDAx", "NVDAon", "multiplier", "basis point", "wrapper"];

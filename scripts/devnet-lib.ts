@@ -44,6 +44,35 @@ export interface WrapperEntry {
   };
 }
 
+/**
+ * One vault: one underlying, its receipt mint, and the wrappers it accepts.
+ */
+export interface VaultEntry {
+  symbol: string;
+  /** Human name for the underlying, e.g. "NVIDIA". Display only. */
+  displayName: string;
+  /**
+   * One plain line saying what owning this is. Display only, and written to
+   * describe the underlying, never a wrapper.
+   */
+  description: string;
+  address: string;
+  receiptMint: string;
+  receiptDecimals: number;
+  tokenProgram: string;
+  authority: string;
+  keeperFeeBps: number;
+  keeperFeeMin: string;
+  wrappers: WrapperEntry[];
+  /**
+   * The Pyth feed pricing the underlying, not any wrapper. Optional because an
+   * address book written before prices existed has none.
+   */
+  priceFeed?: { symbol: string; id: string };
+  /** The setup wallet's receipt account for this vault. */
+  ownerReceiptAccount: string;
+}
+
 export interface AddressBook {
   cluster: string;
   generatedAt: string;
@@ -70,6 +99,13 @@ export interface AddressBook {
     keeperFeeMin: string;
   };
   wrappers: WrapperEntry[];
+  /**
+   * Every vault, the first being the one `vault` and `wrappers` above mirror.
+   * Those two fields predate a second vault and are kept, identical to
+   * vaults[0], so a keeper or script built against the single vault layout
+   * keeps working against a rebuilt address book until it is updated.
+   */
+  vaults: VaultEntry[];
   owner: {
     address: string;
     paymentAccount: string;
@@ -85,6 +121,24 @@ export function loadAddressBook(): AddressBook {
     );
   }
   return JSON.parse(fs.readFileSync(ADDRESS_BOOK_PATH, "utf8")) as AddressBook;
+}
+
+/**
+ * Every vault in an address book, including one written before `vaults`
+ * existed, which is read as the single vault it describes.
+ */
+export function vaultsOf(book: AddressBook): VaultEntry[] {
+  if (book.vaults?.length) {
+    return book.vaults;
+  }
+  return [
+    {
+      description: "",
+      ownerReceiptAccount: book.owner.receiptAccount,
+      ...book.vault,
+      wrappers: book.wrappers,
+    },
+  ];
 }
 
 export function loadAddressBookIfPresent(): AddressBook | null {
@@ -113,6 +167,9 @@ export interface ContextFacts {
   devnetUsdcMint: PublicKey;
   nvdax: MintFacts;
   nvdaon: MintFacts;
+  spyx: MintFacts;
+  /** Pyth feed symbol to feed id, from the price feeds section. */
+  priceFeeds: Record<string, string>;
 }
 
 export interface MintFacts {
@@ -202,6 +259,25 @@ function readMintFacts(
   };
 }
 
+/**
+ * "Equity.US.NVDA/USD: <64 hex>" lines from the Pyth section. Only lines of
+ * exactly that shape count, so the section's prose naming feeds to avoid can
+ * never be read as one to use.
+ */
+function readPriceFeeds(markdown: string): Record<string, string> {
+  const blocks = section(markdown, "Pyth price feeds");
+  if (blocks.length !== 1) {
+    throw new Error(
+      `CONTEXT.md has ${blocks.length} Pyth price feed sections, expected exactly 1`
+    );
+  }
+  const feeds: Record<string, string> = {};
+  for (const match of blocks[0].matchAll(/^(Equity\.[\w.]+\/USD):\s*([0-9a-f]{64})\s*$/gm)) {
+    feeds[match[1]] = match[2];
+  }
+  return feeds;
+}
+
 export function loadContext(): ContextFacts {
   const markdown = fs.readFileSync(CONTEXT_PATH, "utf8");
 
@@ -238,6 +314,8 @@ export function loadContext(): ContextFacts {
     devnetUsdcMint: new PublicKey(unique[0]),
     nvdax: readMintFacts(markdown, "NVDAx (Backed / xStocks)", "NVDAx"),
     nvdaon: readMintFacts(markdown, "NVDAon (Ondo Global Markets)", "NVDAon"),
+    spyx: readMintFacts(markdown, "SPYx (Backed / xStocks)", "SPYx"),
+    priceFeeds: readPriceFeeds(markdown),
   };
 }
 
