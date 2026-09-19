@@ -21,13 +21,16 @@
  *   PARITAS_ADDRESS_BOOK        default ./devnet.json
  *   PARITAS_IDL                 default ./target/idl/paritas.json
  *   KEEPER_POLL_SECONDS         default 60
- *   KEEPER_QUOTE_USDC_PER_SHARE default 5.00, see quoteDelivery
- *   KEEPER_QUOTE_<SYMBOL>       per vault override, e.g. KEEPER_QUOTE_SPY
- *
- * Every vault in the address book is served. Each delivers its own first
- * wrapper, which is the one setup-devnet.ts stocks the keeper with.
  *   KEEPER_COMPUTE_UNIT_LIMIT   default 400000
  *   KEEPER_CONFIRM_TIMEOUT_SECONDS default 60, see sendAndConfirm
+ *   PYTH_API_KEY                required, Hermes key for the price reads
+ *   PYTH_HERMES_URL             default https://pyth.dourolabs.app/hermes
+ *   KEEPER_MAX_PRICE_AGE_SECONDS default 60, see priceProblem
+ *   KEEPER_MAX_CONFIDENCE_PERCENT default 1, see priceProblem
+ *
+ * Every vault in the address book is served. Each delivers its own first
+ * wrapper, which is the one setup-devnet.ts stocks the keeper with, at the
+ * Pyth price of the vault's underlying.
  */
 import * as fs from "fs";
 import * as path from "path";
@@ -53,13 +56,17 @@ import {
 } from "@solana/spl-token";
 import {
   AddressBook,
+  PythQuote,
   RetryOptions,
   VaultEntry,
   WrapperEntry,
   vaultsOf,
   currentMultiplierFixed,
+  fetchPythQuotes,
   formatAmount,
+  fromEquityUnits,
   keeperFee,
+  paymentPerShare,
   toEquityUnits,
   withRetry,
 } from "../scripts/devnet-lib";
@@ -94,7 +101,11 @@ const IDL_PATH =
   process.env.PARITAS_IDL ?? path.resolve("target/idl/paritas.json");
 const POLL_SECONDS = optionalNumber("KEEPER_POLL_SECONDS", 60);
 const COMPUTE_UNIT_LIMIT = optionalNumber("KEEPER_COMPUTE_UNIT_LIMIT", 400_000);
-const QUOTE_USDC_PER_SHARE = optionalNumber("KEEPER_QUOTE_USDC_PER_SHARE", 5);
+const PYTH_API_KEY = required("PYTH_API_KEY");
+const PYTH_HERMES_URL =
+  process.env.PYTH_HERMES_URL ?? "https://pyth.dourolabs.app/hermes";
+const MAX_PRICE_AGE_SECONDS = optionalNumber("KEEPER_MAX_PRICE_AGE_SECONDS", 60);
+const MAX_CONFIDENCE_PERCENT = optionalNumber("KEEPER_MAX_CONFIDENCE_PERCENT", 1);
 const CONFIRM_TIMEOUT_SECONDS = optionalNumber("KEEPER_CONFIRM_TIMEOUT_SECONDS", 60);
 
 // --- logging ---------------------------------------------------------------
@@ -325,24 +336,77 @@ interface ScheduleAccount {
 }
 
 /**
- * How many raw wrapper units this execution should deliver.
+ * Why a price should not be traded on, or null if it can be.
  *
- * ON MAINNET THIS IS A JUPITER QUOTE. The keeper would ask Jupiter what the
- * schedule's USDC buys, check the answer against the schedule's floor, and
- * build the route. Here there is no venue quoting these mock mints, so the
- * quote is a configured constant price and the delivery comes out of the
- * keeper's own inventory. See buildSwapSubstitute.
+ * STALE PRICES ARE SKIPPED, NOT USED. The feeds are US equities and stop at
+ * the close, so outside market hours the latest price is hours or days old.
+ * Buying at it would hand the saver a number of shares worked out from
+ * Friday's close on a Sunday: exactly the quietly wrong scheduled buy this
+ * project exists to prevent, and on mainnet the Jupiter route would fill at
+ * whatever the wrapper actually trades at, not at that number. So the run is
+ * left due and retried on every poll until the price is live again.
+ *
+ * What skipping costs is timing, not money. A plan due on Saturday buys at
+ * Monday's open. It does not buy twice to catch up: settle_execution's
+ * next_due_after moves the next due date a full cadence past the late buy,
+ * so a daily plan loses its weekend buys rather than bunching them.
+ *
+ * A price whose confidence interval is wide against the price, as it can be
+ * right at the open, is skipped for the same reason.
+ */
+function priceProblem(quote: PythQuote | undefined, now: number): string | null {
+  if (!quote) {
+    return "no price for this asset";
+  }
+  const age = now - quote.publishTime;
+  if (age > MAX_PRICE_AGE_SECONDS) {
+    return `price is ${formatAge(age)} old, market likely closed; leaving it due`;
+  }
+  // conf / price > percent / 100, in integers.
+  if (quote.conf * 10_000n > quote.price * BigInt(Math.round(MAX_CONFIDENCE_PERCENT * 100))) {
+    return "price confidence is too wide right now; leaving it due";
+  }
+  return null;
+}
+
+function formatAge(seconds: number): string {
+  if (seconds < 120) {
+    return `${seconds}s`;
+  }
+  if (seconds < 2 * 3600) {
+    return `${Math.round(seconds / 60)}m`;
+  }
+  if (seconds < 2 * 86400) {
+    return `${Math.round(seconds / 3600)}h`;
+  }
+  return `${Math.round(seconds / 86400)}d`;
+}
+
+/**
+ * How many raw wrapper units this execution should deliver, at a Pyth price.
+ *
+ * The keeper is paid its fee out of the buy, so what the saver's shares are
+ * bought with is the amount less that fee, the same swap amount
+ * begin_execution hands over. That buys swapAmount / price shares of the
+ * underlying, and the wrapper amount carrying exactly that many shares comes
+ * from the wrapper's own multiplier, the inverse of what settle_execution
+ * will apply when it values the delivery. Rounded down at every step.
  */
 function quoteDelivery(
-  amountUsdc: bigint,
+  swapAmount: bigint,
+  quote: PythQuote,
   paymentDecimals: number,
   wrapper: WrapperEntry,
-  quoteUsdcPerShare: number
-): bigint {
-  const usdcPerShare = BigInt(
-    Math.round(quoteUsdcPerShare * Number(pow10(paymentDecimals)))
-  );
-  return (amountUsdc * pow10(wrapper.decimals)) / usdcPerShare;
+  multFixed: bigint,
+  equityDecimals: number
+): { delivery: bigint; shares: bigint; perShare: bigint } {
+  const perShare = paymentPerShare(quote, paymentDecimals);
+  const shares = (swapAmount * pow10(equityDecimals)) / perShare;
+  return {
+    delivery: fromEquityUnits(shares, wrapper.decimals, multFixed),
+    shares,
+    perShare,
+  };
 }
 
 // --- one execution ---------------------------------------------------------
@@ -353,7 +417,8 @@ interface Context {
   book: AddressBook;
   /** The vault this context executes for. One context per vault. */
   vaultEntry: VaultEntry;
-  quoteUsdcPerShare: number;
+  /** The Pyth feed for this vault's underlying, id without 0x. */
+  priceFeedId: string;
   keeper: Keypair;
   wrapper: WrapperEntry;
   wrapperMint: PublicKey;
@@ -469,23 +534,42 @@ function schedulePdaOf(ctx: Context, schedule: ScheduleAccount): PublicKey {
 async function execute(
   ctx: Context,
   schedulePda: PublicKey,
-  schedule: ScheduleAccount
+  schedule: ScheduleAccount,
+  quote: PythQuote | undefined
 ): Promise<void> {
-  const amount = BigInt(schedule.amountUsdc.toString());
-  const delivery = quoteDelivery(
-    amount,
-    ctx.book.payment.decimals,
-    ctx.wrapper,
-    ctx.quoteUsdcPerShare
-  );
-
   const now = Math.floor(Date.now() / 1000);
+  const unusable = priceProblem(quote, now);
+  if (unusable || !quote) {
+    log("warn", `skip ${schedulePda.toBase58()}: ${unusable}`);
+    return;
+  }
+
+  const amount = BigInt(schedule.amountUsdc.toString());
+  const swapAmount =
+    amount -
+    keeperFee(
+      amount,
+      BigInt(ctx.vaultEntry.keeperFeeBps),
+      BigInt(ctx.vaultEntry.keeperFeeMin)
+    );
   const multFixed = currentMultiplierFixed(
     ctx.wrapper.mainnet.multiplier,
     ctx.wrapper.mainnet.newMultiplier,
     ctx.wrapper.mainnet.newMultiplierEffectiveTimestamp,
     now
   );
+  const { delivery, perShare } = quoteDelivery(
+    swapAmount,
+    quote,
+    ctx.book.payment.decimals,
+    ctx.wrapper,
+    multFixed,
+    ctx.vaultEntry.receiptDecimals
+  );
+  if (delivery === 0n) {
+    log("warn", `skip ${schedulePda.toBase58()}: buy rounds to no shares`);
+    return;
+  }
   const expectedEquityUnits = toEquityUnits(
     delivery,
     ctx.wrapper.decimals,
@@ -536,21 +620,25 @@ async function execute(
 
   // ===================== DEVNET SUBSTITUTE FOR JUPITER =====================
   //
-  // THIS IS NOT A SWAP. On mainnet this slot holds a Jupiter route that sells
-  // the USDC begin_execution just handed the keeper and delivers the wrapper
-  // into the escrow. Jupiter is not deployed on devnet, and these are mock
-  // mints no venue makes a market in, so there is no route to build.
+  // THIS IS NOT A SWAP. It is inventory delivered at a Pyth-quoted rate.
   //
-  // What stands in for it is a direct transfer out of the keeper's own
-  // inventory into the escrow. The keeper keeps the USDC and gives up the
-  // shares, which is the position a keeper ends a real execution in anyway.
+  // On mainnet this one instruction is a Jupiter route that sells the USDC
+  // begin_execution just handed the keeper and delivers the wrapper into the
+  // escrow. Jupiter is not deployed on devnet, and these are mock mints no
+  // venue makes a market in, so there is no route to build.
+  //
+  // What stands in for it is a direct transfer out of the keeper's own wrapper
+  // inventory into the escrow, sized by quoteDelivery from the Pyth price of
+  // the underlying (Equity.US.NVDA/USD, Equity.US.SPY/USD) at the moment of the
+  // run, and only while that price is live. The keeper keeps the USDC and gives
+  // up the shares, the position a keeper ends a real execution in anyway, and
+  // the saver's cost basis is what the shares actually cost at the time.
   //
   // The program never inspects this instruction. settle_execution measures the
   // escrow balance, values it at the live multiplier and checks it against the
   // floor, and would do exactly that whether the tokens came from Jupiter,
-  // another aggregator, or inventory. To go to mainnet, replace this one
-  // instruction with the Jupiter swap, destination escrowPda, and change
-  // nothing else.
+  // another aggregator, or inventory. To go to mainnet, a Jupiter route with
+  // destination escrowPda replaces this one instruction and nothing else.
   const swapSubstituteIx = createTransferCheckedInstruction(
     ctx.keeperWrapperAccount,
     ctx.wrapperMint,
@@ -629,6 +717,8 @@ async function execute(
   log(
     "info",
     `executed ${schedulePda.toBase58()} ` +
+      `price=${formatAmount(perShare, ctx.book.payment.decimals)} ` +
+      `priceAge=${formatAge(now - quote.publishTime)} ` +
       `owner=${schedule.owner.toBase58()} ` +
       `amount=${formatAmount(amount, ctx.book.payment.decimals)} ${
         ctx.book.payment.label
@@ -683,6 +773,26 @@ async function pollOnce(
   }
   log("info", `${due.length} schedule(s) due`);
 
+  // One price read per poll, for every vault with something due. A read that
+  // fails leaves every schedule due for the next poll, which is the same
+  // answer a stale price gets, for the same reason.
+  const feeds = Array.from(
+    new Set(
+      due.map((entry) => byVault.get(entry.account.vault.toBase58())!.priceFeedId)
+    )
+  );
+  let quotes: Record<string, PythQuote>;
+  try {
+    quotes = await withRetry(
+      "pyth prices",
+      () => fetchPythQuotes(PYTH_HERMES_URL, PYTH_API_KEY, feeds),
+      retryOptions()
+    );
+  } catch (err) {
+    log("warn", `prices unavailable (${describeError(err)}), leaving ${due.length} due`);
+    return;
+  }
+
   for (const entry of due) {
     if (stopping) {
       log("info", "stopping, leaving the rest for the next run");
@@ -690,7 +800,7 @@ async function pollOnce(
     }
     const ctx = byVault.get(entry.account.vault.toBase58())!;
     try {
-      await execute(ctx, entry.publicKey, entry.account);
+      await execute(ctx, entry.publicKey, entry.account, quotes[ctx.priceFeedId]);
     } catch (err) {
       // One schedule's problem is its own. A revoked delegation, an owner who
       // spent their balance, a slot where the swap leg reverts: none of it is
@@ -749,16 +859,19 @@ async function main(): Promise<void> {
     if (!wrapper) {
       throw new Error(`vault ${vaultEntry.symbol} has no wrappers`);
     }
+    if (!vaultEntry.priceFeed) {
+      throw new Error(
+        `vault ${vaultEntry.symbol} has no price feed in the address book; ` +
+          "rerun scripts/setup-devnet.ts"
+      );
+    }
     const wrapperMint = new PublicKey(wrapper.mint);
     return {
       connection,
       program,
       book,
       vaultEntry,
-      quoteUsdcPerShare: optionalNumber(
-        `KEEPER_QUOTE_${vaultEntry.symbol}`,
-        QUOTE_USDC_PER_SHARE
-      ),
+      priceFeedId: vaultEntry.priceFeed.id.replace(/^0x/, "").toLowerCase(),
       keeper,
       wrapper,
       wrapperMint,
@@ -786,7 +899,7 @@ async function main(): Promise<void> {
     log(
       "info",
       `vault ${ctx.vaultEntry.symbol} ${ctx.vault.toBase58()} delivering ` +
-        `${ctx.wrapper.label} ${ctx.wrapper.mint} at ${ctx.quoteUsdcPerShare} per share`
+        `${ctx.wrapper.label} ${ctx.wrapper.mint} priced by ${ctx.vaultEntry.priceFeed!.symbol}`
     );
   }
   log(

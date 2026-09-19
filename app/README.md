@@ -112,6 +112,11 @@ co-signature covers the whole message, so nothing in it can be altered, and
 the saver pays every fee and rent. On mainnet the sale is a Jupiter route the
 saver signs alone, and the route is not needed.
 
+Cash out sells at Pyth's price for the underlying, the same feed and the same
+rule the keeper buys by: a price over a minute old is not sold at, so outside
+US market hours cash out says it is closed and taking the shares, which needs
+no price, stays open.
+
 A cash out sells through one wrapper, since the program allows one begin per
 transaction; the screen says the most one cash out can take when that binds.
 
@@ -150,6 +155,26 @@ transactions on each plan's execution receipt address, which nothing but that
 plan's buys touches (`npm run verify` checks this against every plan's own
 count). A buy counts as consecutive unless a whole period was missed before
 it, and the streak ends once the live plan is a whole period overdue.
+
+## Under the hood
+
+For anyone who wants to see the layer the rest of the app hides, and only for
+them. A quiet "Under the hood" link at the very bottom of the home screen opens
+a separate screen that reads live from chain: the tokens backing each asset,
+their multipliers as the mints store them, their decimals, what one token of
+each is worth in shares (by the program's own conversion), the vault's
+receipts against its holdings, and why balances are kept in equity units
+rather than token counts. It links the program on Solana Explorer.
+
+The withdraw screen has an **Advanced** switch, off by default and not
+remembered. Off, nothing changes and no token is named. On, taking the shares
+shows every token the vault could pay in, the exact raw amount each would pay
+for the same shares, and the difference between them, and lets the saver pick
+one. Same shares, different token counts, because the multipliers differ and,
+by a factor of ten, the decimals.
+
+Those two surfaces are the only places wrapper names and multipliers appear.
+Everything else keeps the copy rules.
 
 ## Changing a plan
 
@@ -206,7 +231,6 @@ Set the project's **Root Directory** to `app`. Vercel clones the whole repo, so
 | `PYTH_API_KEY` | for prices | server only | Pyth Hermes key, sent as `Authorization: Bearer`. Without it the dashboard shows shares and money put in, and says today's value is unavailable. |
 | `PYTH_HERMES_URL` | no | server only | Defaults to `https://pyth.dourolabs.app/hermes`. |
 | `CASH_OUT_LIQUIDITY_KEY` | for devnet cash out | server only, **Sensitive** | Secret key (JSON array) of the devnet liquidity key named in `devnet.json`. Any other key is refused. Without it, cash out says it is unavailable; taking shares still works. |
-| `CASH_OUT_QUOTE_USDC_PER_SHARE` | no | server only | Devnet sell price, default `5`, matching the keeper's buy quote. `CASH_OUT_QUOTE_<SYMBOL>` overrides per asset. |
 
 ### Why the key is not a `NEXT_PUBLIC_` variable
 

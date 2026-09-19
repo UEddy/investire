@@ -797,7 +797,19 @@ export interface PayoutSource {
   wrapper: Wrapper;
   /** Raw wrapper units the vault holds. */
   vaultBalance: bigint;
+  /** The live multiplier, as the program's 1e18 fixed point. */
   multFixed: bigint;
+  /**
+   * The same multiplier as the mint stores it, an f64, for display. The
+   * fixed point above carries a few digits of float noise past the value the
+   * mint actually holds, which is right to compute with and wrong to show.
+   */
+  multiplier: number;
+  /**
+   * A multiplier change the mint has scheduled but not yet reached, or null.
+   * Display only, for the under the hood screen; nothing here converts at it.
+   */
+  pending: { multFixed: bigint; multiplier: number; effectiveTs: number } | null;
 }
 
 /**
@@ -834,15 +846,20 @@ export async function loadPayoutSources(
       } catch {
         // No holding account means nothing to pay out of this wrapper.
       }
+      const effectiveTs = Number(config.newMultiplierEffectiveTimestamp);
       return {
         wrapper,
         vaultBalance,
-        multFixed: multiplierFixed(
-          config.multiplier,
-          config.newMultiplier,
-          Number(config.newMultiplierEffectiveTimestamp),
-          now,
-        ),
+        multFixed: multiplierFixed(config.multiplier, config.newMultiplier, effectiveTs, now),
+        multiplier: now >= effectiveTs ? config.newMultiplier : config.multiplier,
+        pending:
+          effectiveTs > now && config.newMultiplier !== config.multiplier
+            ? {
+                multFixed: BigInt(Math.round(config.newMultiplier * Number(MULTIPLIER_SCALE))),
+                multiplier: config.newMultiplier,
+                effectiveTs,
+              }
+            : null,
       };
     }),
   );
@@ -883,7 +900,18 @@ export type Payout =
  * backed one for one, so that should only ever be a rounding sliver, but it is
  * stated as a plain answer rather than left to fail on chain.
  */
-export function planPayout(shares: bigint, sources: PayoutSource[]): Payout {
+export function planPayout(
+  shares: bigint,
+  sources: PayoutSource[],
+  onlyMint?: string,
+): Payout {
+  // The advanced withdraw screen names the wrapper. Then it is that one or
+  // nothing: a saver who picked a token and got a split would have been told
+  // something untrue.
+  if (onlyMint) {
+    const chosen = sources.find((source) => source.wrapper.mint === onlyMint);
+    return chosen ? planSingleWrapper(shares, [chosen]) : { kind: "short", available: 0n };
+  }
   const capacity = (source: PayoutSource) =>
     toEquityUnits(source.vaultBalance, source.wrapper.decimals, source.multFixed);
 
@@ -955,10 +983,12 @@ export async function buildWithdrawTransaction(params: {
   owner: PublicKey;
   asset: VaultEntry;
   shares: bigint;
+  /** Pay out only in this wrapper; see the advanced withdraw option. */
+  wrapperMint?: string;
 }): Promise<{ transaction: Transaction; received: bigint }> {
-  const { program, owner, asset, shares } = params;
+  const { program, owner, asset, shares, wrapperMint } = params;
   const sources = await loadPayoutSources(program.provider.connection, asset);
-  const payout = planPayout(shares, sources);
+  const payout = planPayout(shares, sources, wrapperMint);
   if (payout.kind === "short") {
     throw new PayoutShortError(payout.available);
   }
@@ -1262,4 +1292,66 @@ export async function buildCashOutTransaction(params: {
   );
   transaction.feePayer = owner;
   return transaction;
+}
+
+// --- under the hood ---------------------------------------------------------
+
+/** A 1e18 fixed point multiplier as a decimal, trailing zeros trimmed. */
+export function formatMultiplier(multFixed: bigint): string {
+  const whole = multFixed / MULTIPLIER_SCALE;
+  const fraction = (multFixed % MULTIPLIER_SCALE).toString().padStart(18, "0").replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
+/**
+ * Shares one whole token of a wrapper carries, in equity units: exactly what
+ * deposit and settle_execution would credit for it, through the program's own
+ * conversion.
+ */
+export function sharesPerWholeToken(source: PayoutSource): bigint {
+  return toEquityUnits(
+    10n ** BigInt(source.wrapper.decimals),
+    source.wrapper.decimals,
+    source.multFixed,
+  );
+}
+
+/**
+ * Raw wrapper a number of shares pays out as, per wrapper, and what that raw
+ * amount is worth back in shares after rounding: withdraw's own arithmetic,
+ * for the advanced withdraw screen to lay side by side.
+ */
+export function payoutPerWrapper(
+  shares: bigint,
+  sources: PayoutSource[],
+): { source: PayoutSource; rawOut: bigint; received: bigint; covered: boolean }[] {
+  return sources.map((source) => {
+    const rawOut = fromEquityUnits(shares, source.wrapper.decimals, source.multFixed);
+    return {
+      source,
+      rawOut,
+      received: toEquityUnits(rawOut, source.wrapper.decimals, source.multFixed),
+      covered: rawOut > 0n && rawOut <= source.vaultBalance,
+    };
+  });
+}
+
+/** The vault's own record of the equity units its receipts represent. */
+export async function loadVaultEquity(
+  connection: Connection,
+  asset: VaultEntry,
+): Promise<bigint> {
+  const readOnly = {
+    publicKey: PublicKey.default,
+    signTransaction: () => Promise.reject(new Error("read only")),
+    signAllTransactions: () => Promise.reject(new Error("read only")),
+  } as unknown as AnchorProvider["wallet"];
+  const program = getProgram(connection, readOnly);
+  const vault = await (program.account as any).vault.fetch(new PublicKey(asset.address));
+  return BigInt(vault.totalEquityUnits.toString());
+}
+
+/** What a wrapper's vault holding is worth in shares, by the program's conversion. */
+export function holdingInShares(source: PayoutSource): bigint {
+  return toEquityUnits(source.vaultBalance, source.wrapper.decimals, source.multFixed);
 }

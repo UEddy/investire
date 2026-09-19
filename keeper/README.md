@@ -22,7 +22,7 @@ and the schedule advances exactly once.
 
 ## The swap leg is a devnet substitute
 
-Instruction `[2]` is not a swap. Jupiter is not on devnet and no venue makes a
+Instruction `[2]` is not a swap; it is inventory delivered at a Pyth-quoted rate. Jupiter is not on devnet and no venue makes a
 market in the mock mints, so the keeper delivers wrapper tokens out of its own
 inventory into the execution escrow and keeps the USDC. That is the position a
 keeper ends a real execution in anyway.
@@ -49,13 +49,39 @@ All from the environment. Nothing is committed.
 | `PARITAS_ADDRESS_BOOK` | no | `./devnet.json` | Address book from `scripts/setup-devnet.ts` |
 | `PARITAS_IDL` | no | `./target/idl/paritas.json` | Anchor IDL |
 | `KEEPER_POLL_SECONDS` | no | `60` | Poll interval |
-| `KEEPER_QUOTE_USDC_PER_SHARE` | no | `5` | Stands in for a Jupiter quote |
-| `KEEPER_QUOTE_<SYMBOL>` | no | the above | Per vault override, e.g. `KEEPER_QUOTE_SPY` |
+| `PYTH_API_KEY` | yes | | Hermes key for price reads. Never committed. |
+| `PYTH_HERMES_URL` | no | `https://pyth.dourolabs.app/hermes` | Hermes base |
+| `KEEPER_MAX_PRICE_AGE_SECONDS` | no | `60` | Older prices are not traded on |
+| `KEEPER_MAX_CONFIDENCE_PERCENT` | no | `1` | Wider confidence is not traded on |
+| `KEEPER_CONFIRM_TIMEOUT_SECONDS` | no | `60` | Longest wait on one confirmation |
 
 Every vault in the address book is served, each delivering its own first
 wrapper. `scripts/setup-devnet.ts` stocks the keeper with 100 of each, reading
 the keeper's public key from `KEEPER_PUBKEY` or `.devnet-keys/keeper.json`.
-`KEEPER_WRAPPER` is no longer read.
+`KEEPER_WRAPPER` and `KEEPER_QUOTE_*` are no longer read.
+
+## Prices, and why stale ones are skipped
+
+Each delivery is sized from Pyth's price for the underlying,
+`Equity.US.NVDA/USD` or `Equity.US.SPY/USD`: the buy less the keeper fee,
+divided by the price, is the number of shares delivered, converted to wrapper
+at the wrapper's own multiplier. So the saver's cost basis is what the shares
+cost at the time.
+
+Those feeds only move during US market hours. A price older than a minute is
+not traded on: the run is logged and left due, and retried every poll until
+the price is live. Buying at Friday's close on a Sunday would be exactly the
+quietly wrong scheduled buy this project exists to prevent. The cost is
+timing: a plan due on Saturday buys at Monday's open. It does not buy twice
+to catch up, because the next due date moves a full period past the late buy.
+
+```
+WARN  skip 8VZQ...: price is 3d old, market likely closed; leaving it due
+INFO  executed 8VZQ... price=765.479260 priceAge=2s ... equity=0.003200606 SPY
+```
+
+Confirmation is by polling `getSignatureStatuses` over HTTP, never a
+websocket, and every wait is bounded by `KEEPER_CONFIRM_TIMEOUT_SECONDS`.
 | `KEEPER_COMPUTE_UNIT_LIMIT` | no | `400000` | Introspection plus several CPIs |
 
 No addresses are configured. They all come from the address book.

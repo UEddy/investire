@@ -391,6 +391,94 @@ export function toEquityUnits(
   return (rawAmount * rate) / RATE_SCALE;
 }
 
+/** Integer mirror of multiplier::from_equity_units. Rounds down. */
+export function fromEquityUnits(
+  equityUnits: bigint,
+  decimals: number,
+  multFixed: bigint
+): bigint {
+  const rate = computeRate(
+    MULTIPLIER_SCALE,
+    EQUITY_UNIT_DECIMALS,
+    multFixed,
+    decimals
+  );
+  return (equityUnits * rate) / RATE_SCALE;
+}
+
+/** One Pyth price as Hermes reports it: value = price * 10^expo. */
+export interface PythQuote {
+  price: bigint;
+  conf: bigint;
+  expo: number;
+  publishTime: number;
+}
+
+/**
+ * Latest prices for the given feed ids from Hermes, keyed by id without the
+ * 0x. Since 2026-08-26 Hermes needs an API key for price reads; it goes in an
+ * Authorization: Bearer header and nowhere else. Each entry is shape checked
+ * before it is returned, because what comes back is multiplied by money.
+ * A feed missing from the answer is missing from the result, never zero.
+ */
+export async function fetchPythQuotes(
+  baseUrl: string,
+  apiKey: string,
+  feedIds: string[]
+): Promise<Record<string, PythQuote>> {
+  const ids = feedIds.map((id) => id.replace(/^0x/, "").toLowerCase());
+  const query = ids.map((id) => `ids[]=${id}`).join("&");
+  const response = await fetch(
+    `${baseUrl.replace(/\/$/, "")}/v2/updates/price/latest?${query}&parsed=true`,
+    {
+      headers: { authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(8_000),
+    }
+  );
+  if (!response.ok) {
+    // Status only: an auth failure's body is not worth echoing into a log.
+    throw new Error(`Hermes returned ${response.status}`);
+  }
+  const body = (await response.json()) as {
+    parsed?: {
+      id: string;
+      price: { price: string; conf: string; expo: number; publish_time: number };
+    }[];
+  };
+  const quotes: Record<string, PythQuote> = {};
+  for (const entry of body.parsed ?? []) {
+    const id = entry.id.replace(/^0x/, "").toLowerCase();
+    const p = entry.price;
+    if (
+      ids.includes(id) &&
+      /^\d+$/.test(p?.price ?? "") &&
+      p.price !== "0" &&
+      /^\d+$/.test(p.conf ?? "") &&
+      Number.isInteger(p.expo) &&
+      Number.isInteger(p.publish_time)
+    ) {
+      quotes[id] = {
+        price: BigInt(p.price),
+        conf: BigInt(p.conf),
+        expo: p.expo,
+        publishTime: p.publish_time,
+      };
+    }
+  }
+  return quotes;
+}
+
+/**
+ * A Pyth price as raw payment units per whole share: price * 10^expo dollars,
+ * at the payment mint's decimals. Rounds down.
+ */
+export function paymentPerShare(quote: PythQuote, paymentDecimals: number): bigint {
+  const shift = paymentDecimals + quote.expo;
+  return shift >= 0
+    ? quote.price * pow10(shift)
+    : quote.price / pow10(-shift);
+}
+
 /**
  * Hard ceiling on one execution's keeper fee, in basis points of the buy.
  * Mirrors state::MAX_KEEPER_FEE_BPS.

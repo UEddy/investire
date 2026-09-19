@@ -15,19 +15,32 @@ import {
 } from "@/lib/config";
 import {
   Funding,
+  PROGRAM_ID,
   PayoutSource,
   Plan,
   RUNS_FUNDED,
   loadPayoutSources,
+  loadVaultEquity,
+  payoutPerWrapper,
   planPayout,
   planProblem,
+  holdingInShares,
+  sharesPerWholeToken,
 } from "@/lib/paritas";
-import { CashOutQuote, Prices, quoteCashOut, useSavings } from "@/lib/useSavings";
+import {
+  CASH_OUT_CLOSED,
+  CashOutQuote,
+  Prices,
+  quoteCashOut,
+  useSavings,
+} from "@/lib/useSavings";
 import { Portfolio, buildPortfolio, computeStreak } from "@/lib/portfolio";
 import {
   allowanceReach,
   cadencePhrase,
   changePhrase,
+  exactAmount,
+  relativePercent,
   formatMoney,
   formatMoneyShort,
   formatShares,
@@ -143,6 +156,7 @@ type Overlay =
   | { kind: "create" }
   | { kind: "change"; plan: Plan }
   | { kind: "withdraw" }
+  | { kind: "hood" }
   | null;
 
 function Home({ savings }: { savings: Savings }) {
@@ -176,7 +190,9 @@ function Home({ savings }: { savings: Savings }) {
         animate={{ opacity: 1, y: 0 }}
         transition={SPRING_SOFT}
       >
-        {overlay.kind === "withdraw" ? (
+        {overlay.kind === "hood" ? (
+          <UnderTheHood onClose={close} />
+        ) : overlay.kind === "withdraw" ? (
           <WithdrawForm savings={savings} onClose={close} />
         ) : (
           <PlanForm
@@ -243,7 +259,7 @@ function Home({ savings }: { savings: Savings }) {
         ) : null}
       </AnimatePresence>
 
-      <Footer cash={holdings?.cash ?? 0n} />
+      <Footer cash={holdings?.cash ?? 0n} onHood={() => open({ kind: "hood" })} />
     </Shell>
   );
 }
@@ -1005,6 +1021,10 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
   const [way, setWay] = useState<Way>("shares");
   const [sources, setSources] = useState<PayoutSource[] | null>(null);
   const [quote, setQuote] = useState<CashOutQuote | null>(null);
+  // Off by default, and not remembered: the advanced view is something a
+  // saver opens on purpose each time, never a place they are left in.
+  const [advanced, setAdvanced] = useState(false);
+  const [chosenMint, setChosenMint] = useState<string | null>(null);
 
   const asset = assetBySymbol(assetSymbol);
   const owned = shares[asset.symbol] ?? 0n;
@@ -1040,8 +1060,27 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
   }, [valid, amount, asset, publicKey]);
 
   const payout = valid && sources ? planPayout(amount!, sources) : null;
+
+  // The advanced view: every wrapper's payout for the same shares, side by
+  // side. Only computed when the saver has asked to see it.
+  const perWrapper =
+    advanced && valid && sources ? payoutPerWrapper(amount!, sources) : null;
+  const silentChoice =
+    payout?.kind === "ok" && payout.legs.length === 1
+      ? payout.legs[0].source.wrapper.mint
+      : perWrapper?.find((row) => row.covered)?.source.wrapper.mint ?? null;
+  const chosen =
+    perWrapper?.find(
+      (row) => row.source.wrapper.mint === (chosenMint ?? silentChoice),
+    ) ?? null;
+  const advancedShares = advanced && way === "shares" && perWrapper !== null;
+
   const ready =
-    way === "shares" ? payout?.kind === "ok" : quote?.kind === "ok";
+    way === "shares"
+      ? advancedShares
+        ? chosen?.covered === true
+        : payout?.kind === "ok"
+      : quote?.kind === "ok";
 
   const submit = async () => {
     if (!ready || amount === null) {
@@ -1049,7 +1088,11 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
     }
     const landed =
       way === "shares"
-        ? await savings.withdraw(asset, amount)
+        ? await savings.withdraw(
+            asset,
+            amount,
+            advancedShares ? chosen?.source.wrapper.mint : undefined,
+          )
         : quote?.kind === "ok"
           ? await savings.cashOut(asset, amount, quote.paymentOut)
           : false;
@@ -1149,7 +1192,9 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
               outcome={
                 !sources
                   ? "Working it out"
-                  : payout?.kind === "ok"
+                  : advancedShares && chosen
+                    ? `${sharesLine(chosen.received)} of ${asset.displayName}`
+                    : payout?.kind === "ok"
                     ? `${sharesLine(payout.received)} of ${asset.displayName}`
                     : payout?.kind === "short"
                       ? shortLine(payout.available, "take out")
@@ -1169,16 +1214,62 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
                     ? formatMoney(quote.paymentOut, MONEY_DECIMALS)
                     : quote.kind === "short"
                       ? shortLine(quote.available, "cash out")
-                      : "Cash out isn't available right now."
+                      : quote.kind === "closed"
+                        ? CASH_OUT_CLOSED
+                        : "Cash out isn't available right now."
               }
               available={quote?.kind === "ok"}
             />
+            {advancedShares && perWrapper ? (
+              <WrapperChooser
+                rows={perWrapper}
+                chosenMint={chosen?.source.wrapper.mint ?? null}
+                onChoose={setChosenMint}
+                shareDecimals={asset.receiptDecimals}
+              />
+            ) : null}
+            {advanced && way === "cash" ? (
+              <p className="px-1 text-[13px] leading-relaxed text-muted">
+                Cash out sells through whichever token the vault holds most
+                of. The dollars you receive do not depend on which.
+              </p>
+            ) : null}
             <p className="px-1 text-[13px] leading-relaxed text-muted">
               Either way the shares leave your savings here, and any plan you
               have keeps buying as before.
             </p>
           </div>
         ) : null}
+
+        <label className="mt-6 flex items-center justify-between gap-3 px-1">
+          <span className="text-[14px] text-muted">
+            Advanced
+            {advanced ? (
+              <span className="block text-[12px]">Choose which token your shares are paid in.</span>
+            ) : null}
+          </span>
+          <button
+            role="switch"
+            aria-checked={advanced}
+            onClick={() => {
+              setAdvanced((on) => !on);
+              setChosenMint(null);
+            }}
+            className={[
+              "relative h-6 w-10 shrink-0 rounded-full transition-colors",
+              advanced ? "bg-ink" : "bg-line",
+            ].join(" ")}
+          >
+            <motion.span
+              layout
+              transition={SPRING_SOFT}
+              className={[
+                "absolute top-0.5 h-5 w-5 rounded-full bg-paper",
+                advanced ? "right-0.5" : "left-0.5",
+              ].join(" ")}
+            />
+          </button>
+        </label>
       </div>
 
       <motion.button
@@ -1191,7 +1282,9 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
           ? way === "shares"
             ? "Taking out"
             : "Cashing out"
-          : way === "shares" && payout?.kind === "ok"
+          : advancedShares && chosen?.covered
+            ? `Take ${exactAmount(chosen.rawOut, chosen.source.wrapper.decimals)} ${chosen.source.wrapper.label}`
+            : way === "shares" && payout?.kind === "ok"
             ? `Take ${sharesLine(payout.received)}`
             : way === "cash" && quote?.kind === "ok"
               ? `Cash out ${formatMoney(quote.paymentOut, MONEY_DECIMALS)}`
@@ -1202,6 +1295,86 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
         <p className="mt-4 text-center text-[15px] text-ink">{savings.error}</p>
       ) : null}
     </Shell>
+  );
+}
+
+/**
+ * The Paritas layer, made visible: the same number of shares, paid out as
+ * each wrapper, at each wrapper's own multiplier. The token counts differ,
+ * and the difference is exactly the multipliers' drift plus the decimals.
+ * Only ever rendered behind the advanced switch.
+ */
+function WrapperChooser({
+  rows,
+  chosenMint,
+  onChoose,
+  shareDecimals,
+}: {
+  rows: ReturnType<typeof payoutPerWrapper>;
+  chosenMint: string | null;
+  onChoose: (mint: string) => void;
+  shareDecimals: number;
+}) {
+  // Token counts on a common scale, so two wrappers with different decimals
+  // can be subtracted.
+  const scale = Math.max(...rows.map((row) => row.source.wrapper.decimals));
+  const aligned = (row: (typeof rows)[number]) =>
+    row.rawOut * 10n ** BigInt(scale - row.source.wrapper.decimals);
+  const [more, fewer] =
+    rows.length === 2
+      ? [...rows].sort((x, y) => (aligned(x) > aligned(y) ? -1 : 1))
+      : [null, null];
+
+  return (
+    <div className="rounded-2xl border border-line bg-white/60 p-3">
+      {rows.map((row) => {
+        const selected = row.source.wrapper.mint === chosenMint;
+        const { label, decimals, mint } = row.source.wrapper;
+        return (
+          <button
+            key={mint}
+            onClick={() => row.covered && onChoose(mint)}
+            disabled={!row.covered}
+            className={[
+              "w-full rounded-xl px-3 py-2.5 text-left",
+              selected ? "bg-accentSoft" : "",
+              row.covered ? "" : "opacity-50",
+            ].join(" ")}
+          >
+            <span className="flex items-baseline justify-between gap-3">
+              <span className="text-[15px] font-semibold">
+                {selected ? "\u25cf " : "\u25cb "}
+                {label}
+              </span>
+              <span className="font-mono text-[14px]">{exactAmount(row.rawOut, decimals)}</span>
+            </span>
+            <span className="mt-0.5 flex justify-between gap-3 font-mono text-[12px] text-muted">
+              <span>{row.rawOut.toLocaleString("en-US")} raw units</span>
+              <span>
+                {row.covered
+                  ? `= ${exactAmount(row.received, shareDecimals)} shares`
+                  : `vault holds ${exactAmount(row.source.vaultBalance, decimals)}`}
+              </span>
+            </span>
+          </button>
+        );
+      })}
+
+      {more && fewer ? (
+        <p className="mt-2 px-3 text-[13px] leading-relaxed text-muted">
+          Same shares, different token counts. {more.source.wrapper.label} pays{" "}
+          <span className="font-mono text-ink">
+            {exactAmount(aligned(more) - aligned(fewer), scale)}
+          </span>{" "}
+          more tokens than {fewer.source.wrapper.label}, because each{" "}
+          {more.source.wrapper.label} token carries slightly less of a share
+          (multiplier {String(more.source.multiplier)} against{" "}
+          {String(fewer.source.multiplier)}). The raw unit counts differ
+          by about {Math.round(Number(fewer.rawOut) / Number(more.rawOut) >= 1 ? Number(fewer.rawOut) / Number(more.rawOut) : Number(more.rawOut) / Number(fewer.rawOut))}
+          {" "}times as well, which is only the decimals.
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -1261,12 +1434,218 @@ function capitalise(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function Footer({ cash }: { cash: bigint }) {
+/**
+ * The way into the under the hood screen sits here, at the very bottom, in
+ * the quietest type on the page. One tap for anyone who wants it; easy to
+ * never notice for anyone who does not.
+ */
+function Footer({ cash, onHood }: { cash: bigint; onHood: () => void }) {
   return (
-    <footer className="mt-auto pt-10">
-      <p className="text-center text-[13px] text-muted">
+    <footer className="mt-auto pt-10 text-center">
+      <p className="text-[13px] text-muted">
         {formatMoney(cash, MONEY_DECIMALS)} ready to save
       </p>
+      <button onClick={onHood} className="mt-3 px-2 py-1 text-[13px] text-muted underline decoration-line underline-offset-4">
+        Under the hood
+      </button>
     </footer>
+  );
+}
+
+const EXPLORER_CLUSTER =
+  ADDRESS_BOOK.cluster === "mainnet-beta" ? "" : `?cluster=${ADDRESS_BOOK.cluster}`;
+
+function explorer(address: string): string {
+  return `https://explorer.solana.com/address/${address}${EXPLORER_CLUSTER}`;
+}
+
+interface HoodAsset {
+  asset: VaultEntry;
+  sources: PayoutSource[];
+  equity: bigint;
+}
+
+/**
+ * The one place the app shows what it is built on. Everything the consumer
+ * screens deliberately hide is here, read live from chain: which tokens back
+ * each asset, their multipliers from mint state, their decimals, what one of
+ * each is worth in shares, and why the app's balances are kept in shares and
+ * never in token units.
+ *
+ * Numbers come from the same integer conversions the program runs, so what
+ * this screen says one token is worth is what a deposit of it would credit.
+ */
+function UnderTheHood({ onClose }: { onClose: () => void }) {
+  const { connection } = useConnection();
+  const [assets, setAssets] = useState<HoodAsset[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    Promise.all(
+      ASSETS.map(async (asset) => ({
+        asset,
+        sources: await loadPayoutSources(connection, asset),
+        equity: await loadVaultEquity(connection, asset),
+      })),
+    )
+      .then((loaded) => live && setAssets(loaded))
+      .catch(() => live && setFailed(true));
+    return () => {
+      live = false;
+    };
+  }, [connection]);
+
+  return (
+    <Shell>
+      <button onClick={onClose} className="-ml-1 self-start px-1 py-2 text-[15px] text-muted">
+        Back
+      </button>
+
+      <div className="pt-6">
+        <h2 className="text-[2rem] font-semibold leading-tight tracking-tight">
+          Under the hood
+        </h2>
+        <p className="mt-4 text-[15px] leading-relaxed text-muted">
+          Investire runs on Paritas, a Solana program. A share of NVIDIA is
+          issued on chain by more than one provider, as different tokens. They
+          stand for the same share, but they are not interchangeable one for
+          one, and this is where the difference is handled.
+        </p>
+      </div>
+
+      {failed ? (
+        <p className="mt-8 text-[15px] text-ink">Couldn&rsquo;t read the chain just now. Try again in a moment.</p>
+      ) : !assets ? (
+        <p className="mt-8 text-[15px] text-muted">Reading the chain</p>
+      ) : (
+        assets.map((entry) => <HoodAssetCard key={entry.asset.symbol} {...entry} />)
+      )}
+
+      <section className="mt-8">
+        <h3 className="text-[17px] font-semibold">Why your balance is in shares</h3>
+        <p className="mt-2 text-[15px] leading-relaxed text-muted">
+          The app never keeps your balance as a count of tokens. Every buy is
+          converted, at the moment it lands, into equity units: the token
+          amount times that token&rsquo;s own multiplier, adjusted for its
+          decimals, at nine decimal places. One billion equity units is one
+          share, whichever token carried it.
+        </p>
+        <p className="mt-3 text-[15px] leading-relaxed text-muted">
+          So a buy that arrives as one token and a buy that arrives as the
+          other add up correctly, and a withdrawal can be paid in either,
+          converted back at that token&rsquo;s multiplier. Counting tokens
+          instead would put a small error into every balance, and a large one
+          wherever two tokens use different decimals.
+        </p>
+      </section>
+
+      <section className="mt-8 rounded-2xl border border-line bg-white/60 p-4 text-[14px]">
+        <Row label="Program" value={short(PROGRAM_ID.toBase58())} />
+        <a
+          href={explorer(PROGRAM_ID.toBase58())}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1 inline-block text-[14px] font-medium text-accent"
+        >
+          View the program on Solana Explorer
+        </a>
+        <p className="mt-2 text-[13px] text-muted">
+          Network: {ADDRESS_BOOK.cluster}. The tokens here are test copies
+          carrying the real tokens&rsquo; multipliers.
+        </p>
+      </section>
+    </Shell>
+  );
+}
+
+function short(address: string): string {
+  return `${address.slice(0, 4)}\u2026${address.slice(-4)}`;
+}
+
+function HoodAssetCard({ asset, sources, equity }: HoodAsset) {
+  const held = sources.reduce((sum, source) => sum + holdingInShares(source), 0n);
+  // Ordered so "more" is always true: the token carrying less of a share
+  // first, the one carrying more second.
+  const [a, b] = [...sources].sort((x, y) => (x.multFixed < y.multFixed ? -1 : 1));
+
+  return (
+    <section className="mt-8">
+      <h3 className="text-[17px] font-semibold">{asset.displayName}</h3>
+
+      <div className="mt-3 space-y-3">
+        {sources.map((source) => (
+          <div key={source.wrapper.mint} className="rounded-2xl border border-line bg-white/60 p-4">
+            <div className="flex items-baseline justify-between">
+              <span className="text-[16px] font-semibold">{source.wrapper.label}</span>
+              <a
+                href={explorer(source.wrapper.mint)}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-[12px] text-accent"
+              >
+                {short(source.wrapper.mint)}
+              </a>
+            </div>
+            <div className="mt-2 font-mono text-[13px]">
+              <Row label="Multiplier" value={String(source.multiplier)} />
+              <Row label="Decimals" value={String(source.wrapper.decimals)} />
+              <Row
+                label="1 token is"
+                value={`${exactAmount(sharesPerWholeToken(source), asset.receiptDecimals)} shares`}
+              />
+              <Row
+                label="Vault holds"
+                value={exactAmount(source.vaultBalance, source.wrapper.decimals)}
+              />
+            </div>
+            {source.pending ? (
+              <p className="mt-1 text-[12px] text-muted">
+                Scheduled to change to {String(source.pending.multiplier)} on{" "}
+                {new Date(source.pending.effectiveTs * 1000).toLocaleDateString()}.
+              </p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+
+      {a && b ? (
+        <div className="mt-3 rounded-2xl bg-accentSoft p-4 text-[14px] leading-relaxed text-ink">
+          <p>
+            <strong>Why they differ.</strong> {a.wrapper.label} uses{" "}
+            {a.wrapper.decimals} decimals and {b.wrapper.label} uses{" "}
+            {b.wrapper.decimals}, so one raw unit of{" "}
+            {a.wrapper.decimals < b.wrapper.decimals ? a.wrapper.label : b.wrapper.label}{" "}
+            is {10 ** Math.abs(a.wrapper.decimals - b.wrapper.decimals)} times larger
+            to begin with. Then each carries its own multiplier, the adjustment
+            its issuer applies for corporate actions such as dividends, and
+            those have drifted apart.
+          </p>
+          <p className="mt-2">
+            Once the decimals are lined up, one {b.wrapper.label} is worth{" "}
+            {relativePercent(a.multFixed, b.multFixed)}{" "}
+            of a share more than one {a.wrapper.label}. Small, but a swap that
+            treated them one for one would be wrong by exactly that, on every
+            trade.
+          </p>
+        </div>
+      ) : (
+        <p className="mt-3 text-[14px] text-muted">
+          One token backs {asset.displayName} today. The vault is built to take
+          more, and would hold them side by side in the same way.
+        </p>
+      )}
+
+      <div className="mt-3 font-mono text-[13px]">
+        <Row label="Receipts outstanding" value={`${exactAmount(equity, asset.receiptDecimals)} shares`} />
+        <Row label="Tokens held, in shares" value={`${exactAmount(held, asset.receiptDecimals)} shares`} />
+      </div>
+      <p className="text-[12px] leading-relaxed text-muted">
+        What the vault owes its savers, against what its tokens are worth at
+        today&rsquo;s multipliers. Each conversion rounds down in the
+        vault&rsquo;s favour, so the second is never meant to fall short of
+        the first.
+      </p>
+    </section>
   );
 }

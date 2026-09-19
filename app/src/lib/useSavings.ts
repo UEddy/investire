@@ -42,11 +42,28 @@ export type Prices =
 
 const PRICE_REFRESH_MS = 60_000;
 
+/**
+ * Said when prices are not live. Plain about why, and about the alternative,
+ * without promising an opening time the app does not know for holidays.
+ */
+export const CASH_OUT_CLOSED =
+  "Cash out works while US markets are open. You can take the shares any time.";
+
 /** What cashing out a number of shares would pay, or why it cannot. */
 export type CashOutQuote =
   | { kind: "ok"; sharesSold: bigint; paymentOut: bigint }
   | { kind: "short"; available: bigint }
+  /** Prices are not live, so nothing is sold. Taking the shares still works. */
+  | { kind: "closed" }
   | { kind: "unavailable" };
+
+/** Cash out needs a live price, and US markets have closed since the quote. */
+class MarketClosedError extends Error {
+  constructor() {
+    super("prices are not live");
+    this.name = "MarketClosedError";
+  }
+}
 
 /** The price moved between the quote on screen and the transaction built. */
 class CashOutMovedError extends Error {
@@ -97,6 +114,9 @@ export async function quoteCashOut(
     if (body.error === "vault-short" || body.error === "liquidity-short") {
       return { kind: "short", available: BigInt(body.available as string) };
     }
+    if (body.error === "market-closed") {
+      return { kind: "closed" };
+    }
     return { kind: "unavailable" };
   } catch {
     return { kind: "unavailable" };
@@ -137,7 +157,8 @@ export interface SavingsState {
     amount: bigint,
     cadenceSeconds: number,
   ) => Promise<boolean>;
-  withdraw: (asset: VaultEntry, shares: bigint) => Promise<boolean>;
+  /** wrapperMint only from the advanced withdraw option; otherwise chosen silently. */
+  withdraw: (asset: VaultEntry, shares: bigint, wrapperMint?: string) => Promise<boolean>;
   /**
    * Sells shares for dollars in one transaction. Refuses, with a sentence, if
    * the transaction built would pay less than `expected`, the figure the
@@ -339,13 +360,14 @@ export function useSavings(): SavingsState {
   );
 
   const withdraw = useCallback(
-    (asset: VaultEntry, shares: bigint) =>
+    (asset: VaultEntry, shares: bigint, wrapperMint?: string) =>
       run(async (program, owner) => {
         const { transaction } = await buildWithdrawTransaction({
           program,
           owner,
           asset,
           shares,
+          wrapperMint,
         });
         return transaction;
       }),
@@ -384,6 +406,9 @@ export function useSavings(): SavingsState {
           if (body.status !== 200) {
             if (body.error === "vault-short" || body.error === "liquidity-short") {
               throw new PayoutShortError(BigInt(body.available as string));
+            }
+            if (body.error === "market-closed") {
+              throw new MarketClosedError();
             }
             throw new Error(`cash out ${body.error ?? body.status}`);
           }
@@ -436,6 +461,9 @@ export function useSavings(): SavingsState {
  * prompt, or whose connection dropped, should not be shown a stack trace.
  */
 function friendly(err: unknown): string {
+  if (err instanceof MarketClosedError) {
+    return CASH_OUT_CLOSED;
+  }
   if (err instanceof CashOutMovedError) {
     return "The price changed a moment ago. Check the new amount and try again.";
   }

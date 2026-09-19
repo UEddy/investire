@@ -1,3 +1,5 @@
+import { nextMarketOpen } from "./market";
+
 /**
  * Display helpers.
  *
@@ -72,19 +74,24 @@ export function cadencePhrase(cadenceSeconds: number, nextDueTs: number): string
   return `every ${Math.round(cadenceSeconds / 3600)} hours`;
 }
 
-/** "Friday", or "today" when it is due now. Used for the next-run line. */
+/**
+ * When the next buy will actually happen: "today", "tomorrow", "Monday".
+ *
+ * Not simply the due date. A buy needs a live price, so one due on a Saturday
+ * happens at Monday's open, and one due overnight at the next open. Saying
+ * "Saturday" would be a promise the keeper will not keep.
+ */
 export function whenNext(nextDueTs: number): string {
   const now = Date.now() / 1000;
-  if (nextDueTs <= now) {
+  const when = nextMarketOpen(Math.max(nextDueTs, now));
+  const day = (ts: number) => new Date(ts * 1000).toDateString();
+  if (day(when) === day(now)) {
     return "today";
   }
-  const days = Math.ceil((nextDueTs - now) / (24 * 60 * 60));
-  if (days <= 1) {
+  if (day(when) === day(now + 24 * 60 * 60)) {
     return "tomorrow";
   }
-  return new Date(nextDueTs * 1000).toLocaleDateString(undefined, {
-    weekday: "long",
-  });
+  return new Date(when * 1000).toLocaleDateString(undefined, { weekday: "long" });
 }
 
 export function shortAddress(address: string): string {
@@ -229,4 +236,29 @@ export function shortDate(ts: number): string {
     day: "numeric",
     year: sameYear ? undefined : "numeric",
   });
+}
+
+/**
+ * A raw token amount at its full precision, nothing rounded: "0.09983016".
+ * For the under the hood surfaces only, where the point is to see exactly how
+ * many token units a number of shares is.
+ */
+export function exactAmount(raw: bigint, decimals: number): string {
+  const negative = raw < 0n;
+  const value = negative ? -raw : raw;
+  const scale = 10n ** BigInt(decimals);
+  const whole = (value / scale).toLocaleString("en-US");
+  const fraction = (value % scale).toString().padStart(decimals, "0");
+  return `${negative ? "-" : ""}${whole}${decimals > 0 ? `.${fraction}` : ""}`;
+}
+
+/** A relative difference (b - a) / a as a percent with four significant figures. */
+export function relativePercent(a: bigint, b: bigint): string {
+  if (a === 0n) {
+    return "0%";
+  }
+  // Twelve places of integer precision, then one float divide for display.
+  const scaled = Number(((b - a) * 10n ** 12n) / a) / 1e10;
+  const text = scaled.toPrecision(4);
+  return `${text.includes(".") ? text.replace(/\.?0+$/, "") : text}%`;
 }

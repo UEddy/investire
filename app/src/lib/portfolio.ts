@@ -6,6 +6,7 @@
  * for a percentage that is displayed and never added to anything.
  */
 import type { Execution, Plan } from "./paritas";
+import { weekdaySeconds } from "./market";
 
 export interface Quote {
   price: bigint;
@@ -158,6 +159,13 @@ export interface Streak {
  * The streak is live only while a plan is: with nothing active, or the active
  * plan already a whole period overdue, it has ended, and saying otherwise
  * would be flattery.
+ *
+ * For plans faster than weekly, gaps are measured in weekday time. Buys only
+ * happen on a live US equity price, so a daily plan's Friday buy is followed
+ * by Monday's, and counting the weekend would break every daily streak every
+ * week for something the saver did not miss. Weekly and slower plans keep
+ * plain elapsed time: their due date just slides to Monday, and discounting
+ * weekends there would let a skipped week read as consecutive.
  */
 export function computeStreak(
   executions: Execution[],
@@ -169,14 +177,14 @@ export function computeStreak(
     return none;
   }
   const sorted = [...executions].sort((a, b) => b.ts - a.ts);
-  if (now - sorted[0].ts >= 2 * active.cadenceSeconds) {
+  if (gap(sorted[0].ts, now, active.cadenceSeconds) >= 2 * active.cadenceSeconds) {
     return none;
   }
 
   let count = 1;
   for (let i = 1; i < sorted.length; i++) {
     const later = sorted[i - 1];
-    if (later.ts - sorted[i].ts >= 2 * later.cadenceSeconds) {
+    if (gap(sorted[i].ts, later.ts, later.cadenceSeconds) >= 2 * later.cadenceSeconds) {
       break;
     }
     count++;
@@ -187,4 +195,10 @@ export function computeStreak(
     ? counted[0].cadenceSeconds
     : null;
   return { count, cadenceSeconds: pace };
+}
+
+const WEEK = 7 * 24 * 60 * 60;
+
+function gap(from: number, to: number, cadenceSeconds: number): number {
+  return cadenceSeconds < WEEK ? weekdaySeconds(from, to) : to - from;
 }

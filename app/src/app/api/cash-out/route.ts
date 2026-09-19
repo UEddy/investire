@@ -15,11 +15,11 @@
  * it; the blockhash expires it within about a minute; and the user pays every
  * fee and rent, so an unsubmitted co-signature costs the key nothing.
  *
- * The price is configured, not quoted from a market, to match the keeper's
- * devnet buy substitute: KEEPER_QUOTE_USDC_PER_SHARE and this route's
- * CASH_OUT_QUOTE_USDC_PER_SHARE default to the same 5.00, so on devnet a
- * share is bought and sold at one price and the liquidity key's USDC is not
- * drained by the gap between a mock buy price and a real sell price.
+ * The price is Pyth's, for the underlying, the same feed and the same
+ * liveness rule the keeper buys at: a price over a minute old, or with a
+ * confidence interval wider than one percent, is refused rather than sold at.
+ * Outside US market hours that means cash out is closed, and the screen says
+ * so. Taking the shares needs no price and stays open.
  */
 import { AnchorProvider, Idl, Program } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
@@ -30,7 +30,7 @@ import {
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import { ADDRESS_BOOK, ASSETS, PARITAS_IDL } from "@/lib/config";
-import { parseMoney } from "@/lib/format";
+import { paymentPerShare, readPrices, tradeable } from "@/lib/pyth";
 import {
   PAYMENT_MINT,
   buildCashOutTransaction,
@@ -70,15 +70,6 @@ function liquidityKey(): Keypair | null {
   }
 }
 
-function pricePerShare(symbol: string): bigint | null {
-  const text =
-    process.env[`CASH_OUT_QUOTE_${symbol}`] ??
-    process.env.CASH_OUT_QUOTE_USDC_PER_SHARE ??
-    "5";
-  const raw = parseMoney(text, ADDRESS_BOOK.payment.decimals);
-  return raw && raw > 0n ? raw : null;
-}
-
 export async function POST(request: Request): Promise<Response> {
   let body: { owner?: string; asset?: string; shares?: string; mode?: string };
   try {
@@ -101,10 +92,19 @@ export async function POST(request: Request): Promise<Response> {
 
   const url = rpcUrl();
   const liquidity = liquidityKey();
-  const price = pricePerShare(asset.symbol);
-  if (!url || !liquidity || !price) {
+  if (!url || !liquidity) {
     return fail(503, "cash-out-unavailable");
   }
+
+  const read = await readPrices();
+  const quote = read.kind === "ok" ? read.quotes[asset.symbol] : undefined;
+  if (!quote) {
+    return fail(503, "cash-out-unavailable");
+  }
+  if (!tradeable(quote)) {
+    return fail(409, "market-closed", { pricedAt: String(quote.publishTime) });
+  }
+  const price = paymentPerShare(quote, ADDRESS_BOOK.payment.decimals);
 
   const connection = new Connection(url, "confirmed");
   // Anchor only needs a wallet here to build instructions, never to sign:
