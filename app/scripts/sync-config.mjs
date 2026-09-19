@@ -3,9 +3,20 @@
 // Both are produced outside this package: devnet.json by
 // scripts/setup-devnet.ts, the IDL by `anchor idl build`. Copying rather than
 // reaching across the repo with a relative import keeps the Next module graph
-// inside this directory, and means a Vercel build with the root set to app/
-// still gets them, since Vercel clones the whole repo before running this.
-import { copyFileSync, mkdirSync, existsSync } from "node:fs";
+// inside this directory.
+//
+// On a Vercel deploy rooted at app/, neither source is uploaded, so this finds
+// nothing to copy. That is expected, not an error: the previously copied files
+// are in the upload (see .vercelignore) and are what the build uses. Missing a
+// source is only fatal when there is also no existing copy to fall back on,
+// because then the app genuinely has no addresses.
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,23 +24,61 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..");
 
 const files = [
-  [resolve(repoRoot, "devnet.json"), resolve(here, "..", "src/config/devnet.json")],
-  [
-    resolve(repoRoot, "target/idl/paritas.json"),
-    resolve(here, "..", "src/config/paritas-idl.json"),
-  ],
+  {
+    what: "address book",
+    from: resolve(repoRoot, "devnet.json"),
+    to: resolve(here, "..", "src/config/devnet.json"),
+    origin: "scripts/setup-devnet.ts",
+    // The address book records the endpoint the environment was built
+    // against. That field is stripped on the way in, because this file is
+    // imported by client code and therefore ships to every visitor. Today it
+    // holds a public endpoint and nothing is lost; the day somebody rebuilds
+    // the environment against a provider url with a key in it, the key would
+    // ride along into the bundle and quietly undo the /api/rpc proxy. The
+    // browser gets its endpoint from the proxy, never from here.
+    strip: ["rpcUrl"],
+  },
+  {
+    what: "program IDL",
+    from: resolve(repoRoot, "target/idl/paritas.json"),
+    to: resolve(here, "..", "src/config/paritas-idl.json"),
+    origin: "`anchor idl build`",
+  },
 ];
 
-for (const [from, to] of files) {
-  if (!existsSync(from)) {
-    console.error(
-      `sync-config: ${from} is missing.\n` +
-        "  devnet.json comes from scripts/setup-devnet.ts\n" +
-        "  target/idl/paritas.json comes from `anchor idl build`",
-    );
-    process.exit(1);
+let failed = false;
+
+for (const { what, from, to, origin, strip } of files) {
+  if (existsSync(from)) {
+    mkdirSync(dirname(to), { recursive: true });
+    if (strip?.length) {
+      const parsed = JSON.parse(readFileSync(from, "utf8"));
+      for (const field of strip) {
+        delete parsed[field];
+      }
+      writeFileSync(to, `${JSON.stringify(parsed, null, 2)}\n`);
+      console.log(`sync-config: refreshed ${what}, without ${strip.join(", ")}`);
+    } else {
+      copyFileSync(from, to);
+      console.log(`sync-config: refreshed ${what}`);
+    }
+    continue;
   }
-  mkdirSync(dirname(to), { recursive: true });
-  copyFileSync(from, to);
-  console.log(`sync-config: ${from} -> ${to}`);
+
+  if (existsSync(to)) {
+    console.log(
+      `sync-config: ${what} source not present, using the copy already here`,
+    );
+    continue;
+  }
+
+  console.error(
+    `sync-config: no ${what}, and nothing to fall back on.\n` +
+      `  expected ${from}, which comes from ${origin}`,
+  );
+  failed = true;
+}
+
+if (failed) {
+  process.exit(1);
 }

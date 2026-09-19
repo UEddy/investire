@@ -18,7 +18,7 @@ import {
   Transaction,
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
-import { ADDRESS_BOOK, RPC_URL, WEEK_SECONDS } from "../src/lib/config";
+import { ADDRESS_BOOK, WEEK_SECONDS } from "../src/lib/config";
 import {
   buildCancelPlanTransaction,
   buildCreatePlanTransaction,
@@ -81,7 +81,23 @@ function ok(message: string): void {
   console.log(`ok    ${message}`);
 }
 
+/**
+ * The endpoint to test against. The app's own copy of the address book has no
+ * rpcUrl in it any more, on purpose, so this reads the unstripped original at
+ * the repo root. RPC_URL overrides it.
+ */
+function endpoint(): string {
+  if (process.env.RPC_URL) {
+    return process.env.RPC_URL;
+  }
+  const root = JSON.parse(
+    fs.readFileSync(new URL("../../devnet.json", import.meta.url), "utf8"),
+  );
+  return root.rpcUrl;
+}
+
 async function main(): Promise<void> {
+  const RPC_URL = endpoint();
   const walletPath = process.env.ANCHOR_WALLET;
   if (!walletPath) {
     fail("ANCHOR_WALLET is not set");

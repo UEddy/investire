@@ -203,6 +203,47 @@ export async function loadHoldings(
  * something set up elsewhere, and quietly revoking it would be the same
  * failure with a different victim.
  */
+/**
+ * Waits for a transaction to confirm, over HTTP.
+ *
+ * connection.confirmTransaction subscribes over a websocket, and this app
+ * reaches the chain through its own /api/rpc proxy, which forwards JSON-RPC
+ * over HTTP and nothing else. web3.js would derive a wss:// url from the proxy
+ * path, find nothing listening, and wait forever. Polling the signature status
+ * asks the same question over the transport that actually exists.
+ *
+ * Resolves on confirmation, throws if the chain reports the transaction
+ * failed, and gives up after the timeout rather than hanging the button.
+ */
+export async function confirmSignature(
+  connection: Connection,
+  signature: string,
+  timeoutMs = 60_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const { value } = await connection.getSignatureStatuses([signature]);
+    const status = value[0];
+
+    if (status) {
+      if (status.err) {
+        throw new Error(`transaction failed: ${JSON.stringify(status.err)}`);
+      }
+      if (
+        status.confirmationStatus === "confirmed" ||
+        status.confirmationStatus === "finalized"
+      ) {
+        return;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+
+  throw new Error("timed out waiting for confirmation");
+}
+
 /** Who, if anyone, is currently allowed to spend from the saver's dollars. */
 export async function currentDelegate(
   connection: Connection,

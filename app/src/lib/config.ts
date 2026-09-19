@@ -18,7 +18,6 @@ export interface Wrapper {
 
 export interface AddressBook {
   cluster: string;
-  rpcUrl: string;
   programId: string;
   tokenProgram2022: string;
   tokenProgramClassic: string;
@@ -42,12 +41,48 @@ export const ADDRESS_BOOK = book as AddressBook;
 export const PARITAS_IDL = idl;
 
 /**
- * The RPC the app talks to. The address book records which endpoint the
- * environment was built against; an override lets a deployment point at a
- * paid endpoint without rebuilding the address book.
+ * The RPC endpoint the browser should talk to.
+ *
+ * This is a function and not a module level constant on purpose. As a constant
+ * it was evaluated at import time, which during `next build` means while the
+ * page is being statically generated on the server, with no window and no
+ * browser env. ConnectionProvider then received whatever that produced and
+ * web3.js rejected it: "Endpoint URL must start with http: or https:". Every
+ * route inherits the root layout, so even /_not-found failed.
+ *
+ * The rule this encodes: nothing on the server ever needs a Connection. The
+ * browser reaches the chain through this app's own /api/rpc proxy, and the
+ * proxy itself calls the upstream with plain fetch, not with a Connection. So
+ * asking for an endpoint outside the browser is a mistake, and it throws
+ * rather than inventing a placeholder that would paper over it.
+ *
+ * NEXT_PUBLIC_RPC_URL overrides the proxy with a direct connection, and is
+ * correct only for an endpoint with no key in it: anything with that prefix is
+ * compiled into the bundle and readable by every visitor.
  */
-export const RPC_URL =
-  process.env.NEXT_PUBLIC_RPC_URL ?? ADDRESS_BOOK.rpcUrl;
+export function resolveRpcEndpoint(): string {
+  const direct = process.env.NEXT_PUBLIC_RPC_URL;
+  if (direct) {
+    if (!/^https?:\/\//.test(direct)) {
+      throw new Error(
+        `NEXT_PUBLIC_RPC_URL must be an absolute http(s) url, got "${direct}"`,
+      );
+    }
+    return direct;
+  }
+
+  if (typeof window === "undefined") {
+    throw new Error(
+      "resolveRpcEndpoint was called on the server. Nothing server side in " +
+        "this app should construct a web3.js Connection: the browser uses the " +
+        "/api/rpc proxy, and the proxy calls upstream with fetch.",
+    );
+  }
+
+  // Absolute, because web3.js parses the endpoint as a URL and a bare
+  // "/api/rpc" is not one.
+  return `${window.location.origin}/api/rpc`;
+}
 
 /** Amounts offered on the create screen, in whole units of the payment mint. */
 export const AMOUNT_PRESETS = [5, 10, 25];

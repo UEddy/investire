@@ -89,14 +89,44 @@ What that leaves untested is the wallet adapter handing back a signature.
 Set the project's **Root Directory** to `app`. Vercel clones the whole repo, so
 `prebuild` can still reach `../devnet.json` and `../target/idl/paritas.json`.
 
-| Variable | Required | Meaning |
-| --- | --- | --- |
-| `NEXT_PUBLIC_RPC_URL` | no | Overrides the RPC in `devnet.json` |
+| Variable | Required | Scope | Meaning |
+| --- | --- | --- | --- |
+| `RPC_URL` | yes | server only | The real RPC endpoint. Never reaches the browser. |
+| `NEXT_PUBLIC_RPC_URL` | no | **public** | Bypasses the proxy and connects direct. Only for an endpoint with no key in it. |
 
-The public devnet endpoint rate limits hard and this app polls on load. Point
-`NEXT_PUBLIC_RPC_URL` at a dedicated endpoint before anyone else uses it.
+### Why the key is not a `NEXT_PUBLIC_` variable
+
+`NEXT_PUBLIC_` does not mean "a variable the app uses". It means "a value
+compiled into the JavaScript every visitor downloads". A provider url with an
+api key in it, set that way, is readable by anyone who opens devtools, and
+keeping it out of git changes nothing about that.
+
+So the browser talks to `/api/rpc` on this app's own domain, and that route
+forwards to `RPC_URL` from the server. The key never leaves the server.
+
+Two consequences worth knowing:
+
+- **`sync-config.mjs` strips `rpcUrl` out of the app's copy of the address
+  book.** That file is imported by client code, so the field would otherwise
+  ship to the browser and quietly undo the proxy the next time the environment
+  was rebuilt against a keyed endpoint.
+- **Confirmation polls over HTTP** rather than using
+  `connection.confirmTransaction`, which subscribes over a websocket. There is
+  no websocket through an HTTP proxy, so that call would wait forever. See
+  `confirmSignature` in `src/lib/paritas.ts`.
+
+Set `NEXT_PUBLIC_RPC_URL` only for a genuinely public endpoint, where the
+extra hop buys nothing.
 
 Redeploy whenever `devnet.json` changes; the addresses are baked in at build.
+
+### `.vercelignore`
+
+Without it the CLI falls back to `.gitignore`, which excludes
+`src/config/*.json`. Those are generated rather than authored, but they are
+real build inputs, and the files they come from live outside `app/` and are
+never uploaded when `app/` is the deploy root. `.vercelignore` excludes only
+build output so the generated copies ship.
 
 ## Motion
 

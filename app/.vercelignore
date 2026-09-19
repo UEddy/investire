@@ -1,0 +1,11 @@
+# Without this file the Vercel CLI falls back to .gitignore, which excludes
+# src/config/*.json. Those are generated, not authored, but they are genuine
+# build inputs: the app cannot resolve a single address without them, and the
+# files they are generated from (devnet.json at the repo root, and the IDL
+# under target/) are not inside this directory and so are never uploaded when
+# app/ is the deploy root.
+#
+# So the generated copies are what ship. Only real build output is excluded.
+node_modules
+.next
+out

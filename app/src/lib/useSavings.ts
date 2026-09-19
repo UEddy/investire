@@ -11,6 +11,7 @@ import {
   buildCreatePlanTransaction,
   buildResumePlanTransaction,
   checkFundingBlock,
+  confirmSignature,
   currentDelegate,
   getProgram,
   loadHoldings,
@@ -106,7 +107,7 @@ export function useSavings(): SavingsState {
           plans: current,
         });
         const signature = await wallet.sendTransaction(transaction, connection);
-        await connection.confirmTransaction(signature, "confirmed");
+        await confirmSignature(connection, signature);
         await refresh();
       } catch (err) {
         setError(friendly(err));
@@ -135,7 +136,7 @@ export function useSavings(): SavingsState {
           planAddress: new PublicKey(plan.address),
         });
         const signature = await wallet.sendTransaction(transaction, connection);
-        await connection.confirmTransaction(signature, "confirmed");
+        await confirmSignature(connection, signature);
         await refresh();
       } catch (err) {
         setError(friendly(err));
@@ -160,7 +161,7 @@ export function useSavings(): SavingsState {
           amount: plan.amount,
         });
         const signature = await wallet.sendTransaction(transaction, connection);
-        await connection.confirmTransaction(signature, "confirmed");
+        await confirmSignature(connection, signature);
         await refresh();
       } catch (err) {
         setError(friendly(err));

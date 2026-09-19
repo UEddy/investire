@@ -6,3 +6,5 @@ next-env.d.ts
 # originals are devnet.json and target/idl/paritas.json at the repo root.
 src/config/devnet.json
 src/config/paritas-idl.json
+.vercel
+.env*
