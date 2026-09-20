@@ -11,12 +11,15 @@
  *
  * Step 6 runs the real keeper against devnet with a deliberately stale price
  * and shows it refusing the buy. It needs a schedule that is due; if there is
- * none it says so rather than pretending.
+ * none it says so rather than pretending. It is bounded: the keeper has
+ * KEEPER_DECISION_SECONDS to answer, the wait shows its progress, and if it
+ * does not answer the step says why and stops it. Nothing here may sit silent
+ * or outlive the step, because the whole point is that it is filmed in one take.
  */
 import * as fs from "fs";
 import * as http from "http";
 import * as path from "path";
-import { spawn } from "child_process";
+import { ChildProcess, spawn } from "child_process";
 import { Connection, PublicKey } from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
 import { BN, Program } from "@coral-xyz/anchor";
@@ -33,6 +36,16 @@ import {
 const MAINNET = process.env.DEMO_MAINNET_RPC ?? "https://api.mainnet-beta.solana.com";
 const DEVNET = process.env.DEMO_DEVNET_RPC ?? "https://api.devnet.solana.com";
 const PAUSE = !process.argv.includes("--no-pause");
+/**
+ * How long step 6 waits for the keeper to reach a decision before it gives up
+ * and says why. A recording must not sit on a silent screen: half a minute is
+ * enough for ts-node to start and one devnet poll to run, and a slow network
+ * can be given more with DEMO_KEEPER_TIMEOUT_SECONDS.
+ */
+const KEEPER_DECISION_SECONDS = (() => {
+  const raw = Number(process.env.DEMO_KEEPER_TIMEOUT_SECONDS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 30;
+})();
 
 // --- presentation ----------------------------------------------------------
 
@@ -65,6 +78,45 @@ function blank(): void {
   console.log("");
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * One status line that rewrites itself in place, so a step waiting on a slow
+ * child still looks alive on camera without filling the screen with ticks.
+ * Anything printed while it is showing must go through its own printer, which
+ * wipes the line first; where stdout is not a terminal there is nothing to
+ * rewrite, so each update is simply a dim line of its own.
+ */
+function statusLine() {
+  const tty = Boolean(process.stdout.isTTY);
+  let width = 0;
+  return {
+    set(text: string): void {
+      const line = `  ${text}`;
+      if (!tty) {
+        console.log(`${DIM}${line}${OFF}`);
+        return;
+      }
+      const pad = " ".repeat(Math.max(0, width - line.length));
+      process.stdout.write(`\r${DIM}${line}${OFF}${pad}`);
+      width = line.length;
+    },
+    clear(): void {
+      if (tty && width > 0) {
+        process.stdout.write(`\r${" ".repeat(width)}\r`);
+      }
+      width = 0;
+    },
+    /** Prints a line without leaving the status text behind it. */
+    print(text: string): void {
+      this.clear();
+      console.log(text);
+    },
+  };
+}
+
 /** Waits for one keypress, so the narrator sets the pace. */
 async function pause(): Promise<void> {
   if (!PAUSE) {
@@ -90,6 +142,19 @@ async function pause(): Promise<void> {
 }
 
 // --- chain reads -----------------------------------------------------------
+
+/**
+ * fetch with a deadline, for the devnet reads this script makes. The default
+ * has none: an endpoint that accepts the connection and then never answers
+ * leaves the request outstanding forever, and the step with it. The abort is
+ * not one of the errors withRetry treats as transient, so it ends the read
+ * rather than starting another wait of the same length, and the caller says
+ * devnet is not answering. Retries still happen for the failures it does know.
+ */
+function boundedFetch(seconds: number) {
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+    fetch(input, { ...init, signal: AbortSignal.timeout(seconds * 1_000) })) as any;
+}
 
 interface ScaledConfig {
   authority: string;
@@ -325,11 +390,19 @@ function tokens(raw: bigint, decimals: number): string {
   return `${raw / scale}.${(raw % scale).toString().padStart(decimals, "0")}`;
 }
 
+/** How step 6's wait on the keeper ended. */
+type Outcome = "decided" | "timeout" | "gone";
+
 /**
  * Serves one deliberately stale Pyth price to the real keeper, on localhost,
  * and shows it refusing to buy at it. Nothing is mocked inside the keeper: it
  * is the shipped binary, reading a price over HTTP as it always does, and the
  * only thing arranged is that the price is three days old.
+ *
+ * Bounded, because this is filmed. The keeper gets KEEPER_DECISION_SECONDS to
+ * reach a decision, the wait shows its progress the whole time, and every way
+ * out of here, including the ones nobody wants, ends in one line saying what
+ * happened and a stopped keeper.
  */
 async function staleKeeperDemo(): Promise<void> {
   const book = loadAddressBook();
@@ -338,6 +411,7 @@ async function staleKeeperDemo(): Promise<void> {
     .filter((id): id is string => Boolean(id));
 
   let due: number;
+  note("Looking for a due schedule on devnet.");
   try {
     due = await countDueSchedules();
   } catch (err) {
@@ -378,13 +452,30 @@ async function staleKeeperDemo(): Promise<void> {
       }),
     );
   });
-  await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, "127.0.0.1", resolve);
+    });
+  } catch (err) {
+    note(
+      `Could not open the stale price feed on 127.0.0.1:${port}: ` +
+        `${err instanceof Error ? err.message : String(err)}.`,
+    );
+    return;
+  }
 
   const keeper = spawn(
     "npx",
-    ["ts-node", "--project", "tsconfig.scripts.json", "keeper/index.ts"],
+    // --transpile-only because the type check is a good half of the keeper's
+    // startup and is not what this step is showing. Same code, sooner.
+    ["ts-node", "--transpile-only", "--project", "tsconfig.scripts.json", "keeper/index.ts"],
     {
       cwd: REPO_ROOT,
+      // Its own process group. npx does not pass signals on to ts-node, so
+      // signalling npx alone left the keeper running and this script alive
+      // with it, long after the step was over.
+      detached: true,
       env: {
         ...process.env,
         KEEPER_PRICE_SOURCE: "pyth",
@@ -398,45 +489,161 @@ async function staleKeeperDemo(): Promise<void> {
     },
   );
 
+  // A keeper in its own process group no longer dies with the terminal's
+  // Ctrl-C, so the demo passes one on itself rather than orphaning it.
+  const relay = () => {
+    stopKeeper(keeper).finally(() => process.exit(130));
+  };
+  process.once("SIGINT", relay);
+
   // Only the lines worth filming: what it is pricing from, what is due, and
-  // the refusal. No startup noise.
+  // the decision. No startup noise.
   const interesting = /pricing deliveries|schedule\(s\) due|skip |executed /;
+  // Any of the three is the keeper answering, which is what we came to film:
+  // it bought, it refused, or it tried and the chain said no.
+  const decisive = /skip |executed |failed /;
+  const status = statusLine();
+  const startedAt = Date.now();
+  const elapsed = () => Math.round((Date.now() - startedAt) / 1000);
+
   let sawSkip = false;
-  await new Promise<void>((resolve) => {
-    const done = () => {
-      keeper.kill("SIGINT");
-      resolve();
+  let lastLine = "";
+  let lastError = "";
+  // What it had last said when the budget ran out, held apart from lastLine
+  // so the explanation quotes the line it stalled on and not its goodbye.
+  let stalledOn = "";
+
+  const outcome = await new Promise<Outcome>((resolve) => {
+    let settled = false;
+    const finish = (how: Outcome, after = 0) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearInterval(ticker);
+      clearTimeout(deadline);
+      setTimeout(() => resolve(how), after);
     };
-    const timer = setTimeout(done, 90_000);
+
+    const stage = () => {
+      if (!lastLine) {
+        return "starting the keeper";
+      }
+      return /schedule\(s\) due/.test(lastLine)
+        ? "the keeper is checking the price"
+        : "the keeper is starting up on devnet";
+    };
+    const ticker = setInterval(
+      () => status.set(`${stage()}, ${elapsed()}s of ${KEEPER_DECISION_SECONDS}s`),
+      5_000,
+    );
+    const deadline = setTimeout(() => {
+      stalledOn = lastLine;
+      finish("timeout");
+    }, KEEPER_DECISION_SECONDS * 1_000);
+
     keeper.stdout.on("data", (chunk: Buffer) => {
       for (const line of chunk.toString().split("\n")) {
+        if (!line.trim()) {
+          continue;
+        }
+        lastLine = line;
         if (!interesting.test(line)) {
           continue;
         }
         const trimmed = line.replace(/^\S+\s+/, "");
-        console.log(`  ${trimmed.includes("skip") ? BOLD + trimmed + OFF : trimmed}`);
-        if (trimmed.includes("skip")) {
-          sawSkip = true;
-          clearTimeout(timer);
-          setTimeout(done, 500);
+        const isSkip = /skip /.test(trimmed);
+        status.print(`  ${isSkip ? BOLD + trimmed + OFF : trimmed}`);
+        if (decisive.test(trimmed)) {
+          sawSkip = isSkip;
+          // A breath for the next line of the same decision, then stop.
+          finish("decided", 500);
         }
       }
     });
-    keeper.on("exit", () => {
-      clearTimeout(timer);
-      resolve();
+    // Read, both so a failure to start has something to report and so a full
+    // pipe can never be what stalls the keeper. An execution the chain
+    // rejected is logged here rather than on stdout, and it is as much of an
+    // answer as a skip is, so it ends the wait too.
+    keeper.stderr.on("data", (chunk: Buffer) => {
+      for (const line of chunk.toString().split("\n")) {
+        if (!line.trim()) {
+          continue;
+        }
+        lastError = line.trim();
+        const trimmed = lastError.replace(/^\S+\s+/, "");
+        if (decisive.test(trimmed)) {
+          status.print(`  ${trimmed}`);
+          finish("decided", 500);
+        }
+      }
     });
+    keeper.on("error", (err) => {
+      lastError = err.message;
+      finish("gone");
+    });
+    keeper.on("exit", () => finish("gone"));
   });
-  server.close();
+
+  status.clear();
+  process.off("SIGINT", relay);
+  await stopKeeper(keeper);
+  await new Promise<void>((resolve) => server.close(() => resolve()));
 
   blank();
   if (sawSkip) {
     note("The buy is not made and the schedule stays due. It will be retried every");
     note("poll until the price is live, which outside US market hours means Monday.");
     note("A scheduled buy at a stale price is the failure this project is about.");
+  } else if (outcome === "decided") {
+    note("The keeper decided, but not by skipping: its line is above.");
+  } else if (outcome === "gone") {
+    const why = (lastError || lastLine).replace(/^\S+\s+/, "");
+    note(`The keeper stopped before deciding: ${why || "it printed nothing"}.`);
   } else {
-    note("The keeper did not reach a skip line in time. Its log is above.");
+    note(
+      `No decision in ${KEEPER_DECISION_SECONDS}s (${
+        stalledOn
+          ? `stalled after: ${stalledOn.replace(/^\S+\s+/, "")}`
+          : "the keeper printed nothing"
+      }); rerun with DEMO_KEEPER_TIMEOUT_SECONDS set higher.`,
+    );
   }
+}
+
+/**
+ * Stops the keeper and everything npx started for it, and waits until it is
+ * actually gone. The signal goes to the process group, by negative pid,
+ * because npx keeps ts-node to itself: signalling the child alone leaves the
+ * keeper polling and its pipes open, and an open pipe keeps this script alive
+ * forever after the step has finished. SIGINT first, since the keeper exits
+ * cleanly on it, then SIGKILL for the case where it does not.
+ */
+async function stopKeeper(keeper: ChildProcess): Promise<void> {
+  const pid = keeper.pid;
+  if (!pid || keeper.exitCode !== null || keeper.signalCode !== null) {
+    return;
+  }
+  const exited = new Promise<void>((resolve) => keeper.once("exit", () => resolve()));
+  const signalGroup = (signal: NodeJS.Signals) => {
+    try {
+      process.kill(-pid, signal);
+    } catch {
+      // Already gone, which is the outcome we wanted.
+    }
+  };
+
+  signalGroup("SIGINT");
+  const stopped = await Promise.race([exited.then(() => true), delay(3_000).then(() => false)]);
+  if (!stopped) {
+    signalGroup("SIGKILL");
+    await Promise.race([exited, delay(1_000)]);
+  }
+  // Nothing here may hold the event loop open once the step is over.
+  keeper.stdout?.destroy();
+  keeper.stderr?.destroy();
+  keeper.stdin?.destroy();
+  keeper.unref();
 }
 
 main().catch((err) => {
@@ -451,7 +658,10 @@ main().catch((err) => {
  */
 async function countDueSchedules(): Promise<number> {
   const book = loadAddressBook();
-  const connection = new Connection(process.env.KEEPER_RPC_URL ?? DEVNET, "confirmed");
+  const connection = new Connection(process.env.KEEPER_RPC_URL ?? DEVNET, {
+    commitment: "confirmed",
+    fetch: boundedFetch(12),
+  });
   const idlPath =
     process.env.PARITAS_IDL ?? path.join(REPO_ROOT, "target/idl/paritas.json");
   const idl = JSON.parse(fs.readFileSync(idlPath, "utf8")) as anchor.Idl;
@@ -469,10 +679,13 @@ async function countDueSchedules(): Promise<number> {
   const now = Math.floor(Date.now() / 1000);
   // Retried, because one dropped request from a public endpoint should not
   // end a recording.
+  // Three attempts, not the default five, on a request that cannot outlast
+  // boundedFetch: past that the honest thing on camera is to say devnet is
+  // not answering, rather than to keep the screen still.
   const all = (await withRetry(
     "read schedules",
     () => (program.account as any).schedule.all(),
-    { idempotent: true, onRetry: (m) => note(`  ${m}`) },
+    { idempotent: true, attempts: 3, onRetry: (m) => note(`  ${m}`) },
   )) as {
     account: { vault: PublicKey; nextDueTs: BN; active: boolean };
   }[];
