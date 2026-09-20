@@ -698,9 +698,30 @@ function StartCard({
       <section className="rounded-3xl border border-line bg-white/60 p-5">
         <p className="text-[17px] font-medium">Add some dollars to begin</p>
         <p className="mt-2 text-[15px] leading-relaxed text-muted">
-          Your plan buys with the dollars in your account. Once there are some
-          there, you can start saving.
+          Your plan buys with the dollars in your account. This runs on
+          Solana&rsquo;s test network, so the money is test money and the
+          shares are not real.
         </p>
+        {/* Without these a fresh wallet has nowhere to go: no dollars to save
+            and no SOL to pay the fee with. */}
+        <div className="mt-4 grid gap-2">
+          <a
+            href="https://faucet.circle.com"
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-xl bg-ink px-4 py-3 text-center text-[15px] font-semibold text-paper active:opacity-90"
+          >
+            Get test dollars
+          </a>
+          <a
+            href="https://faucet.solana.com"
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-xl border border-line px-4 py-3 text-center text-[15px] font-medium text-ink active:bg-line/40"
+          >
+            Get test SOL, for fees
+          </a>
+        </div>
       </section>
     );
   }
