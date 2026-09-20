@@ -23,10 +23,12 @@
  *   KEEPER_POLL_SECONDS         default 60
  *   KEEPER_COMPUTE_UNIT_LIMIT   default 400000
  *   KEEPER_CONFIRM_TIMEOUT_SECONDS default 60, see sendAndConfirm
- *   PYTH_API_KEY                required, Hermes key for the price reads
+ *   KEEPER_PRICE_SOURCE         "flat" (default) or "pyth"
+ *   KEEPER_QUOTE_USDC_PER_SHARE default 5, the flat price
+ *   PYTH_API_KEY                required when the source is pyth
  *   PYTH_HERMES_URL             default https://pyth.dourolabs.app/hermes
- *   KEEPER_MAX_PRICE_AGE_SECONDS default 60, see priceProblem
- *   KEEPER_MAX_CONFIDENCE_PERCENT default 1, see priceProblem
+ *   KEEPER_MAX_PRICE_AGE_SECONDS default 60, pyth only, see priceProblem
+ *   KEEPER_MAX_CONFIDENCE_PERCENT default 1, pyth only, see priceProblem
  *
  * Every vault in the address book is served. Each delivers its own first
  * wrapper, which is the one setup-devnet.ts stocks the keeper with, at the
@@ -101,7 +103,18 @@ const IDL_PATH =
   process.env.PARITAS_IDL ?? path.resolve("target/idl/paritas.json");
 const POLL_SECONDS = optionalNumber("KEEPER_POLL_SECONDS", 60);
 const COMPUTE_UNIT_LIMIT = optionalNumber("KEEPER_COMPUTE_UNIT_LIMIT", 400_000);
-const PYTH_API_KEY = required("PYTH_API_KEY");
+/**
+ * Where delivery prices come from. Pyth is integrated and tested against a
+ * stand-in Hermes, but the project's key is not yet accepted (Hermes answers
+ * 403), so the default is a flat price per share until it is. Switching is
+ * KEEPER_PRICE_SOURCE=pyth plus PYTH_API_KEY; nothing else changes.
+ */
+const PRICE_SOURCE = process.env.KEEPER_PRICE_SOURCE ?? "flat";
+if (PRICE_SOURCE !== "flat" && PRICE_SOURCE !== "pyth") {
+  throw new Error(`KEEPER_PRICE_SOURCE must be flat or pyth, got ${PRICE_SOURCE}`);
+}
+const PYTH_API_KEY = PRICE_SOURCE === "pyth" ? required("PYTH_API_KEY") : "";
+const FLAT_USDC_PER_SHARE = optionalNumber("KEEPER_QUOTE_USDC_PER_SHARE", 5);
 const PYTH_HERMES_URL =
   process.env.PYTH_HERMES_URL ?? "https://pyth.dourolabs.app/hermes";
 const MAX_PRICE_AGE_SECONDS = optionalNumber("KEEPER_MAX_PRICE_AGE_SECONDS", 60);
@@ -369,6 +382,19 @@ function priceProblem(quote: PythQuote | undefined, now: number): string | null 
   return null;
 }
 
+/**
+ * The flat price as a quote in Pyth's shape, published now, so a flat run goes
+ * through exactly the same delivery arithmetic as a Pyth one and passes the
+ * liveness check by construction. The mantissa is at the payment decimals.
+ */
+function flatQuotes(feedIds: string[], paymentDecimals: number): Record<string, PythQuote> {
+  const price = BigInt(Math.round(FLAT_USDC_PER_SHARE * Number(pow10(paymentDecimals))));
+  const now = Math.floor(Date.now() / 1000);
+  return Object.fromEntries(
+    feedIds.map((id) => [id, { price, conf: 0n, expo: -paymentDecimals, publishTime: now }])
+  );
+}
+
 function formatAge(seconds: number): string {
   if (seconds < 120) {
     return `${seconds}s`;
@@ -628,9 +654,10 @@ async function execute(
   // venue makes a market in, so there is no route to build.
   //
   // What stands in for it is a direct transfer out of the keeper's own wrapper
-  // inventory into the escrow, sized by quoteDelivery from the Pyth price of
-  // the underlying (Equity.US.NVDA/USD, Equity.US.SPY/USD) at the moment of the
-  // run, and only while that price is live. The keeper keeps the USDC and gives
+  // inventory into the escrow, sized by quoteDelivery from the price source:
+  // a flat price per share by default, or with KEEPER_PRICE_SOURCE=pyth the
+  // Pyth price of the underlying (Equity.US.NVDA/USD, Equity.US.SPY/USD) at
+  // the moment of the run, and only while that price is live. The keeper keeps the USDC and gives
   // up the shares, the position a keeper ends a real execution in anyway, and
   // the saver's cost basis is what the shares actually cost at the time.
   //
@@ -783,11 +810,14 @@ async function pollOnce(
   );
   let quotes: Record<string, PythQuote>;
   try {
-    quotes = await withRetry(
-      "pyth prices",
-      () => fetchPythQuotes(PYTH_HERMES_URL, PYTH_API_KEY, feeds),
-      retryOptions()
-    );
+    quotes =
+      PRICE_SOURCE === "pyth"
+        ? await withRetry(
+            "pyth prices",
+            () => fetchPythQuotes(PYTH_HERMES_URL, PYTH_API_KEY, feeds),
+            retryOptions()
+          )
+        : flatQuotes(feeds, first.book.payment.decimals);
   } catch (err) {
     log("warn", `prices unavailable (${describeError(err)}), leaving ${due.length} due`);
     return;
@@ -905,6 +935,12 @@ async function main(): Promise<void> {
   log(
     "info",
     `polling every ${POLL_SECONDS}s, active flag at byte ${activeOffset}`
+  );
+  log(
+    "info",
+    PRICE_SOURCE === "pyth"
+      ? "pricing deliveries from Pyth; stale prices are skipped"
+      : `pricing deliveries at a flat ${FLAT_USDC_PER_SHARE} per share`
   );
 
   const sol = await withRetry(

@@ -112,10 +112,11 @@ co-signature covers the whole message, so nothing in it can be altered, and
 the saver pays every fee and rent. On mainnet the sale is a Jupiter route the
 saver signs alone, and the route is not needed.
 
-Cash out sells at Pyth's price for the underlying, the same feed and the same
-rule the keeper buys by: a price over a minute old is not sold at, so outside
-US market hours cash out says it is closed and taking the shares, which needs
-no price, stays open.
+Cash out sells at the same price source the keeper buys at: flat by default,
+or with `CASH_OUT_PRICE_SOURCE=pyth`, Pyth's price for the underlying under
+the keeper's rule, so a price over a minute old is not sold at, cash out says
+it is closed outside US market hours, and taking the shares, which needs no
+price, stays open.
 
 A cash out sells through one wrapper, since the program allows one begin per
 transaction; the screen says the most one cash out can take when that binds.
@@ -128,6 +129,16 @@ lands; `npm run verify` checks that to the raw unit. If the vault as a whole
 cannot pay, the screen says how much it can, before any transaction.
 
 ## The dashboard
+
+> **Status: live valuation is integrated and awaiting key activation.** The
+> Pyth reads, the price route, the dashboard's value and change, and Pyth
+> pricing for the keeper and for cash out are all built and tested, against a
+> stand-in Hermes that checks the Bearer header. The project's Pyth key is
+> set in production but Hermes still answers 403, so until it is activated:
+> the dashboard shows shares, money put in and the streak, and says today's
+> value is unavailable; and the keeper and cash out price at a flat 5.00 a
+> share (`KEEPER_PRICE_SOURCE`, `CASH_OUT_PRICE_SOURCE`, both `flat`). Once
+> the key is accepted, set both to `pyth` and redeploy; no code changes.
 
 Shares owned stays the hero: it only moves when the saver buys or takes out,
 never with the market. Under it, "Worth today" gives the value at the latest
@@ -229,6 +240,8 @@ Set the project's **Root Directory** to `app`. Vercel clones the whole repo, so
 | `RPC_URL` | yes | server only | The real RPC endpoint. Never reaches the browser. |
 | `NEXT_PUBLIC_RPC_URL` | no | **public** | Bypasses the proxy and connects direct. Only for an endpoint with no key in it. |
 | `PYTH_API_KEY` | for prices | server only | Pyth Hermes key, sent as `Authorization: Bearer`. Without it the dashboard shows shares and money put in, and says today's value is unavailable. |
+| `CASH_OUT_PRICE_SOURCE` | no | server only | `flat` (default) or `pyth`. |
+| `CASH_OUT_QUOTE_USDC_PER_SHARE` | no | server only | The flat devnet sell price, default `5`, matching the keeper's buy price. |
 | `PYTH_HERMES_URL` | no | server only | Defaults to `https://pyth.dourolabs.app/hermes`. |
 | `CASH_OUT_LIQUIDITY_KEY` | for devnet cash out | server only, **Sensitive** | Secret key (JSON array) of the devnet liquidity key named in `devnet.json`. Any other key is refused. Without it, cash out says it is unavailable; taking shares still works. |
 

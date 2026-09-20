@@ -49,7 +49,9 @@ All from the environment. Nothing is committed.
 | `PARITAS_ADDRESS_BOOK` | no | `./devnet.json` | Address book from `scripts/setup-devnet.ts` |
 | `PARITAS_IDL` | no | `./target/idl/paritas.json` | Anchor IDL |
 | `KEEPER_POLL_SECONDS` | no | `60` | Poll interval |
-| `PYTH_API_KEY` | yes | | Hermes key for price reads. Never committed. |
+| `KEEPER_PRICE_SOURCE` | no | `flat` | `flat` or `pyth` |
+| `KEEPER_QUOTE_USDC_PER_SHARE` | no | `5` | The flat price per share |
+| `PYTH_API_KEY` | when `pyth` | | Hermes key for price reads. Never committed. |
 | `PYTH_HERMES_URL` | no | `https://pyth.dourolabs.app/hermes` | Hermes base |
 | `KEEPER_MAX_PRICE_AGE_SECONDS` | no | `60` | Older prices are not traded on |
 | `KEEPER_MAX_CONFIDENCE_PERCENT` | no | `1` | Wider confidence is not traded on |
@@ -58,9 +60,14 @@ All from the environment. Nothing is committed.
 Every vault in the address book is served, each delivering its own first
 wrapper. `scripts/setup-devnet.ts` stocks the keeper with 100 of each, reading
 the keeper's public key from `KEEPER_PUBKEY` or `.devnet-keys/keeper.json`.
-`KEEPER_WRAPPER` and `KEEPER_QUOTE_*` are no longer read.
+`KEEPER_WRAPPER` is no longer read.
 
 ## Prices, and why stale ones are skipped
+
+**Status:** Pyth pricing is integrated and awaiting key activation. The
+project's key is set but Hermes answers 403, so the keeper defaults to a flat
+price (`KEEPER_PRICE_SOURCE=flat`, 5.00 a share). Everything below applies
+once it is set to `pyth`.
 
 Each delivery is sized from Pyth's price for the underlying,
 `Equity.US.NVDA/USD` or `Equity.US.SPY/USD`: the buy less the keeper fee,
