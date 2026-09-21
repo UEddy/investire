@@ -1,11 +1,12 @@
-# Without this file the Vercel CLI falls back to .gitignore, which excludes
-# src/config/*.json. Those are generated, not authored, but they are genuine
-# build inputs: the app cannot resolve a single address without them, and the
-# files they are generated from (devnet.json at the repo root, and the IDL
-# under target/) are not inside this directory and so are never uploaded when
-# app/ is the deploy root.
+# Only real build output is excluded here.
 #
-# So the generated copies are what ship. Only real build output is excluded.
+# src/config/*.json is generated rather than authored, but it is a genuine
+# build input: the app cannot resolve a single address without it, and the
+# files it is generated from (devnet.json at the repo root, and the IDL under
+# target/) live outside this directory, so they are never uploaded when app/ is
+# the deploy root. Those copies are committed now, so both a CLI upload and a
+# Git integration build have them. This file still matters for the CLI, which
+# would otherwise fall back to .gitignore.
 node_modules
 .next
 out

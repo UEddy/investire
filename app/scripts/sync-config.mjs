@@ -5,11 +5,16 @@
 // reaching across the repo with a relative import keeps the Next module graph
 // inside this directory.
 //
-// On a Vercel deploy rooted at app/, neither source is uploaded, so this finds
-// nothing to copy. That is expected, not an error: the previously copied files
-// are in the upload (see .vercelignore) and are what the build uses. Missing a
-// source is only fatal when there is also no existing copy to fall back on,
-// because then the app genuinely has no addresses.
+// On a Vercel build this often finds nothing to copy, and that is expected
+// rather than an error. The Git integration builds from GitHub, where target/
+// is ignored and so the IDL is simply absent; a CLI deploy rooted at app/
+// uploads neither source either, since both live outside this directory. Both
+// cases land on the same fallback: the copies in src/config are committed, so
+// there is always something already here to build from.
+//
+// Missing a source is only fatal when there is also no existing copy, because
+// then the app genuinely has no addresses. That is what this used to hit on a
+// clean clone, before the copies were committed.
 import {
   copyFileSync,
   existsSync,

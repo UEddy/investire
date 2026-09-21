@@ -1,0 +1,3514 @@
+{
+  "address": "5QkWw7s4dQwAhNZQoKGDTrb6xqcZnMi8XPA7tAkD29LV",
+  "metadata": {
+    "name": "paritas",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "add_liquidity",
+      "discriminator": [
+        181,
+        157,
+        89,
+        67,
+        143,
+        182,
+        52,
+        72
+      ],
+      "accounts": [
+        {
+          "name": "pair",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  105,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair.mint_a",
+                "account": "Pair"
+              },
+              {
+                "kind": "account",
+                "path": "pair.mint_b",
+                "account": "Pair"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "Either side of the pair. The pool and token accounts below are tied",
+            "to whichever one is passed, so one call funds one side."
+          ]
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "authority_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "add_wrapper",
+      "discriminator": [
+        224,
+        23,
+        239,
+        33,
+        181,
+        2,
+        176,
+        225
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault"
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "Must be owned by the vault's own token program. The owner constraint",
+            "runs before the handler, so a mismatched mint is rejected on the token",
+            "program rather than falling through to the missing extension check,",
+            "which is a different problem with a different fix."
+          ]
+        },
+        {
+          "name": "wrapper",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  114,
+                  97,
+                  112,
+                  112,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "begin_cash_out",
+      "discriminator": [
+        108,
+        164,
+        144,
+        122,
+        48,
+        165,
+        96,
+        231
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "docs": [
+            "The user cashing out. Signs the burn of their receipts, and pays the",
+            "rent for the escrow and receipt, which settle_cash_out returns."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.symbol",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wrapper",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  114,
+                  97,
+                  112,
+                  112,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "wrapper_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wrapper_mint"
+        },
+        {
+          "name": "vault_wrapper_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "wrapper_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user_wrapper_account",
+          "docs": [
+            "Where the wrapper lands, for the user to sell from in the same",
+            "transaction. The user's own account, because a route has to be signed",
+            "by whoever owns what it sells."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "wrapper_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "receipt_mint",
+          "writable": true
+        },
+        {
+          "name": "user_receipt_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "receipt_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "payment_mint",
+          "docs": [
+            "What the user is to be paid in. Their choice: they are the one being",
+            "paid, and the vault holds none of it."
+          ]
+        },
+        {
+          "name": "escrow",
+          "docs": [
+            "Destination for the sale. Fresh every cash out, owned by the vault PDA",
+            "so nothing but settle_cash_out can move what lands in it."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  97,
+                  115,
+                  104,
+                  95,
+                  111,
+                  117,
+                  116,
+                  95,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "cash_out_receipt",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  97,
+                  115,
+                  104,
+                  95,
+                  111,
+                  117,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions_sysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token-2022, for the wrapper and the receipt, as the vault records."
+          ]
+        },
+        {
+          "name": "payment_token_program",
+          "docs": [
+            "The payment mint's program, classic SPL for USDC."
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "receipt_amount",
+          "type": "u64"
+        },
+        {
+          "name": "min_payment_out",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "begin_execution",
+      "discriminator": [
+        148,
+        246,
+        18,
+        188,
+        252,
+        93,
+        187,
+        14
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Untrusted. Anyone may run a due schedule; this signature buys nothing",
+            "except the right to pay the rent and collect the fee."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "schedule"
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.symbol",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wrapper",
+          "docs": [
+            "Existence at this address is what proves the mint is registered on this",
+            "vault, the same allowlist deposit and withdraw rely on."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  114,
+                  97,
+                  112,
+                  112,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "wrapper_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wrapper_mint"
+        },
+        {
+          "name": "payment_mint"
+        },
+        {
+          "name": "owner",
+          "docs": [
+            "not sign an execution; the delegation on their payment account is what",
+            "authorises it."
+          ]
+        },
+        {
+          "name": "owner_payment_account",
+          "docs": [
+            "Pinned to the account the owner named at create time. The authority",
+            "check on top of the pinned address is not redundant: a token account's",
+            "owner can be reassigned with SetAuthority after the schedule was made,",
+            "and an execution should stop rather than keep debiting an account that",
+            "has left the schedule owner's hands."
+          ],
+          "writable": true
+        },
+        {
+          "name": "caller_payment_account",
+          "writable": true
+        },
+        {
+          "name": "escrow",
+          "docs": [
+            "Destination for the swap. Fresh every execution, so its balance at",
+            "settle time is unambiguously what this transaction delivered."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "schedule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "receipt",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  101,
+                  99,
+                  117,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "schedule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions_sysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program of the wrapper mints, which are Token-2022."
+          ]
+        },
+        {
+          "name": "payment_token_program",
+          "docs": [
+            "Token program of the payment mint, which need not be the same one."
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "cancel_schedule",
+      "discriminator": [
+        78,
+        206,
+        80,
+        108,
+        51,
+        28,
+        40,
+        140
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": [
+            "schedule"
+          ]
+        },
+        {
+          "name": "schedule",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_schedule",
+      "discriminator": [
+        200,
+        176,
+        213,
+        214,
+        210,
+        121,
+        35,
+        225
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.symbol",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_mint"
+        },
+        {
+          "name": "owner_payment_account",
+          "docs": [
+            "The owner's payment token account, required here so the address the",
+            "owner will delegate against is fixed at creation time rather than",
+            "chosen by whoever runs the execution."
+          ]
+        },
+        {
+          "name": "schedule",
+          "writable": true
+        },
+        {
+          "name": "payment_token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "schedule_index",
+          "type": "u8"
+        },
+        {
+          "name": "amount_usdc",
+          "type": "u64"
+        },
+        {
+          "name": "cadence_seconds",
+          "type": "i64"
+        },
+        {
+          "name": "first_run_ts",
+          "type": "i64"
+        },
+        {
+          "name": "min_equity_units",
+          "type": "u64"
+        },
+        {
+          "name": "floor_tolerance_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "deposit",
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.symbol",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wrapper",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  114,
+                  97,
+                  112,
+                  112,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "wrapper_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wrapper_mint"
+        },
+        {
+          "name": "vault_wrapper_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "wrapper_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user_wrapper_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "wrapper_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "receipt_mint",
+          "writable": true
+        },
+        {
+          "name": "user_receipt_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "receipt_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_in",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "get_rate",
+      "discriminator": [
+        177,
+        72,
+        238,
+        202,
+        231,
+        17,
+        128,
+        243
+      ],
+      "accounts": [
+        {
+          "name": "pair",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  105,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair.mint_a",
+                "account": "Pair"
+              },
+              {
+                "kind": "account",
+                "path": "pair.mint_b",
+                "account": "Pair"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_a"
+        },
+        {
+          "name": "mint_b"
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [],
+      "returns": "u128"
+    },
+    {
+      "name": "init_receipt_metadata",
+      "discriminator": [
+        222,
+        239,
+        26,
+        213,
+        25,
+        141,
+        100,
+        254
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.symbol",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "The vault authority, which must sign. Same gate as add_wrapper and",
+            "set_keeper_fee, and pays the rent for the metadata account."
+          ],
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "receipt_mint",
+          "docs": [
+            "Pinned to this vault's own receipt mint. Naming any other mint, even",
+            "another Paritas vault's, is rejected here rather than relying on",
+            "Metaplex to notice that the signing authority does not match."
+          ]
+        },
+        {
+          "name": "metadata",
+          "docs": [
+            "cannot be deserialised. It is not unchecked in the sense that matters:",
+            "the seeds constraint derives Metaplex's own PDA for receipt_mint, under",
+            "the pinned program below, so only the one correct address is accepted."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  11,
+                  112,
+                  101,
+                  177,
+                  227,
+                  209,
+                  124,
+                  69,
+                  56,
+                  157,
+                  82,
+                  127,
+                  107,
+                  4,
+                  195,
+                  205,
+                  88,
+                  184,
+                  108,
+                  115,
+                  26,
+                  160,
+                  253,
+                  181,
+                  73,
+                  182,
+                  209,
+                  188,
+                  3,
+                  248,
+                  41,
+                  70
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "receipt_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                112,
+                101,
+                177,
+                227,
+                209,
+                124,
+                69,
+                56,
+                157,
+                82,
+                127,
+                107,
+                4,
+                195,
+                205,
+                88,
+                184,
+                108,
+                115,
+                26,
+                160,
+                253,
+                181,
+                73,
+                182,
+                209,
+                188,
+                3,
+                248,
+                41,
+                70
+              ]
+            }
+          }
+        },
+        {
+          "name": "metadata_program",
+          "docs": [
+            "this instruction from handing the vault's signature to a program the",
+            "caller chose. See METADATA_PROGRAM_ID."
+          ],
+          "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "symbol",
+          "type": "string"
+        },
+        {
+          "name": "uri",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "init_vault",
+      "discriminator": [
+        77,
+        79,
+        85,
+        150,
+        33,
+        217,
+        52,
+        106
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "symbol"
+              }
+            ]
+          }
+        },
+        {
+          "name": "receipt_mint",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  99,
+                  101,
+                  105,
+                  112,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "symbol",
+          "type": "string"
+        },
+        {
+          "name": "authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "keeper_fee_bps",
+          "type": "u16"
+        },
+        {
+          "name": "keeper_fee_min",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "register_pair",
+      "discriminator": [
+        178,
+        72,
+        223,
+        54,
+        235,
+        196,
+        1,
+        25
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint_a"
+        },
+        {
+          "name": "mint_b",
+          "docs": [
+            "mint_b's key must be greater than mint_a's, in sorted byte order. This",
+            "is enforced here, not auto-sorted, so the pair PDA address is a pure",
+            "function of the two accounts passed in and there is only one correct",
+            "account order for callers to use."
+          ]
+        },
+        {
+          "name": "pair",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  105,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "fee_bps",
+          "type": "u16"
+        },
+        {
+          "name": "authority",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "remove_liquidity",
+      "discriminator": [
+        80,
+        85,
+        209,
+        72,
+        24,
+        206,
+        177,
+        108
+      ],
+      "accounts": [
+        {
+          "name": "pair",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  105,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair.mint_a",
+                "account": "Pair"
+              },
+              {
+                "kind": "account",
+                "path": "pair.mint_b",
+                "account": "Pair"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "authority_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_keeper_fee",
+      "discriminator": [
+        70,
+        15,
+        64,
+        136,
+        169,
+        67,
+        173,
+        168
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.symbol",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "keeper_fee_bps",
+          "type": "u16"
+        },
+        {
+          "name": "keeper_fee_min",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "settle_cash_out",
+      "discriminator": [
+        138,
+        186,
+        143,
+        91,
+        192,
+        218,
+        142,
+        105
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "cash_out_receipt"
+          ]
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.symbol",
+                "account": "Vault"
+              }
+            ]
+          },
+          "relations": [
+            "cash_out_receipt"
+          ]
+        },
+        {
+          "name": "cash_out_receipt",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  97,
+                  115,
+                  104,
+                  95,
+                  111,
+                  117,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "escrow",
+          "writable": true
+        },
+        {
+          "name": "payment_mint"
+        },
+        {
+          "name": "user_payment_account",
+          "writable": true
+        },
+        {
+          "name": "instructions_sysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "payment_token_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "settle_execution",
+      "discriminator": [
+        186,
+        63,
+        130,
+        92,
+        224,
+        218,
+        118,
+        244
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Untrusted. Receives the escrow and receipt rent back, and the keeper",
+            "fee, and nothing else."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "schedule",
+          "writable": true
+        },
+        {
+          "name": "receipt",
+          "docs": [
+            "Written by begin_execution earlier in this same transaction, and closed",
+            "here. Its address is derived from the schedule, so it cannot be a",
+            "receipt belonging to some other schedule, and the caller equality check",
+            "keeps the rent and the fee flowing back to whoever opened the execution."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  101,
+                  99,
+                  117,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "schedule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.symbol",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wrapper",
+          "docs": [
+            "Existence at this address is the proof that the mint the swap delivered",
+            "is one this vault accepts."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  114,
+                  97,
+                  112,
+                  112,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "wrapper_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wrapper_mint"
+        },
+        {
+          "name": "escrow",
+          "docs": [
+            "Pinned to the address begin_execution created and recorded. That",
+            "account was opened with seeds and a bump in the same transaction, so",
+            "the address comparison here is enough and there is no reason to spend",
+            "the compute rederiving it. Owned by the vault PDA, as required."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vault_wrapper_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "wrapper_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "receipt_mint",
+          "writable": true
+        },
+        {
+          "name": "owner",
+          "docs": [
+            "not sign an execution."
+          ]
+        },
+        {
+          "name": "owner_receipt_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "receipt_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "payment_mint"
+        },
+        {
+          "name": "owner_payment_account",
+          "writable": true
+        },
+        {
+          "name": "caller_payment_account",
+          "writable": true
+        },
+        {
+          "name": "instructions_sysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program of the wrapper and receipt mints, which are Token-2022."
+          ]
+        },
+        {
+          "name": "payment_token_program",
+          "docs": [
+            "Token program of the payment mint, which need not be the same one."
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "min_equity_units",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "swap",
+      "discriminator": [
+        248,
+        198,
+        158,
+        145,
+        225,
+        117,
+        135,
+        200
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "signer": true
+        },
+        {
+          "name": "pair",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  105,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair.mint_a",
+                "account": "Pair"
+              },
+              {
+                "kind": "account",
+                "path": "pair.mint_b",
+                "account": "Pair"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_a"
+        },
+        {
+          "name": "mint_b"
+        },
+        {
+          "name": "pool_a",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "pool_b",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user_token_a",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user_token_b",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "direction",
+          "type": {
+            "defined": {
+              "name": "SwapDirection"
+            }
+          }
+        },
+        {
+          "name": "amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_amount_out",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw",
+      "discriminator": [
+        183,
+        18,
+        70,
+        156,
+        148,
+        109,
+        161,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.symbol",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wrapper",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  114,
+                  97,
+                  112,
+                  112,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "wrapper_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wrapper_mint"
+        },
+        {
+          "name": "vault_wrapper_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "wrapper_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user_wrapper_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "wrapper_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "receipt_mint",
+          "writable": true
+        },
+        {
+          "name": "user_receipt_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "receipt_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "receipt_amount",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "CashOutReceipt",
+      "discriminator": [
+        247,
+        130,
+        40,
+        173,
+        90,
+        157,
+        33,
+        239
+      ]
+    },
+    {
+      "name": "ExecutionReceipt",
+      "discriminator": [
+        126,
+        220,
+        166,
+        135,
+        248,
+        208,
+        202,
+        171
+      ]
+    },
+    {
+      "name": "Pair",
+      "discriminator": [
+        85,
+        72,
+        49,
+        176,
+        182,
+        228,
+        141,
+        82
+      ]
+    },
+    {
+      "name": "Schedule",
+      "discriminator": [
+        217,
+        243,
+        116,
+        56,
+        73,
+        82,
+        207,
+        51
+      ]
+    },
+    {
+      "name": "Vault",
+      "discriminator": [
+        211,
+        8,
+        232,
+        43,
+        2,
+        152,
+        117,
+        119
+      ]
+    },
+    {
+      "name": "Wrapper",
+      "discriminator": [
+        161,
+        11,
+        109,
+        119,
+        86,
+        61,
+        163,
+        136
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidMintData",
+      "msg": "mint account data could not be parsed"
+    },
+    {
+      "code": 6001,
+      "name": "MissingScaledUiAmountExtension",
+      "msg": "mint is missing the ScaledUiAmountConfig extension"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidMultiplier",
+      "msg": "mint multiplier is not a valid positive finite value"
+    },
+    {
+      "code": 6003,
+      "name": "MathOverflow",
+      "msg": "fixed point math overflowed"
+    },
+    {
+      "code": 6004,
+      "name": "MintsNotSorted",
+      "msg": "mint_a must be lexicographically smaller than mint_b"
+    },
+    {
+      "code": 6005,
+      "name": "FeeTooHigh",
+      "msg": "fee exceeds the maximum allowed basis points"
+    },
+    {
+      "code": 6006,
+      "name": "SlippageExceeded",
+      "msg": "swap output is below the caller's minimum"
+    },
+    {
+      "code": 6007,
+      "name": "ZeroAmount",
+      "msg": "swap amount must be greater than zero"
+    },
+    {
+      "code": 6008,
+      "name": "SymbolTooLong",
+      "msg": "vault symbol exceeds the maximum allowed length"
+    },
+    {
+      "code": 6009,
+      "name": "EmptySymbol",
+      "msg": "vault symbol must not be empty"
+    },
+    {
+      "code": 6010,
+      "name": "Unauthorized",
+      "msg": "only the vault's authority may perform this action"
+    },
+    {
+      "code": 6011,
+      "name": "InsufficientVaultBalance",
+      "msg": "the vault's balance of that wrapper is insufficient for this withdrawal"
+    },
+    {
+      "code": 6012,
+      "name": "MintNotInPair",
+      "msg": "mint is not one of the two mints registered on this pair"
+    },
+    {
+      "code": 6013,
+      "name": "InsufficientPoolBalance",
+      "msg": "the pool's balance of that mint is insufficient for this withdrawal"
+    },
+    {
+      "code": 6014,
+      "name": "CadenceTooShort",
+      "msg": "cadence is shorter than the minimum allowed interval"
+    },
+    {
+      "code": 6015,
+      "name": "AmountBelowDustFloor",
+      "msg": "schedule amount is below the dust floor for this payment mint"
+    },
+    {
+      "code": 6016,
+      "name": "ScheduleInactive",
+      "msg": "schedule is not active"
+    },
+    {
+      "code": 6017,
+      "name": "ScheduleNotDue",
+      "msg": "schedule is not due yet"
+    },
+    {
+      "code": 6018,
+      "name": "PaymentMintMismatch",
+      "msg": "token account does not hold the schedule's payment mint"
+    },
+    {
+      "code": 6019,
+      "name": "TokenAccountOwnerMismatch",
+      "msg": "token account is not owned by the expected authority"
+    },
+    {
+      "code": 6020,
+      "name": "VaultMismatch",
+      "msg": "schedule does not belong to this vault"
+    },
+    {
+      "code": 6021,
+      "name": "FeeExceedsAmount",
+      "msg": "keeper fee is not smaller than the schedule amount"
+    },
+    {
+      "code": 6022,
+      "name": "ExecutionReceiptMismatch",
+      "msg": "execution receipt does not match this execution"
+    },
+    {
+      "code": 6023,
+      "name": "MissingBeginExecution",
+      "msg": "no begin_execution for this schedule in this transaction"
+    },
+    {
+      "code": 6024,
+      "name": "DuplicateBeginExecution",
+      "msg": "more than one begin_execution in this transaction"
+    },
+    {
+      "code": 6025,
+      "name": "MissingSettleExecution",
+      "msg": "no settle_execution in this transaction"
+    },
+    {
+      "code": 6026,
+      "name": "DuplicateSettleExecution",
+      "msg": "more than one settle_execution in this transaction"
+    },
+    {
+      "code": 6027,
+      "name": "ExecutionOrderInvalid",
+      "msg": "begin_execution must come before settle_execution"
+    },
+    {
+      "code": 6028,
+      "name": "SettleNotTopLevel",
+      "msg": "settle_execution must be a top level instruction, not a CPI"
+    },
+    {
+      "code": 6029,
+      "name": "BeginNotTopLevel",
+      "msg": "begin_execution must be a top level instruction, not a CPI"
+    },
+    {
+      "code": 6030,
+      "name": "UnexpectedParitasInstruction",
+      "msg": "this transaction carries a paritas instruction that is not part of the execution"
+    },
+    {
+      "code": 6031,
+      "name": "TransactionTooLong",
+      "msg": "transaction has more instructions than introspection will scan"
+    },
+    {
+      "code": 6032,
+      "name": "NothingReceived",
+      "msg": "the swap delivered nothing to the execution escrow"
+    },
+    {
+      "code": 6033,
+      "name": "MinEquityUnitsNotMet",
+      "msg": "equity units received are below the required minimum"
+    },
+    {
+      "code": 6034,
+      "name": "TokenProgramMismatch",
+      "msg": "mint is not owned by the token program this vault was created under"
+    },
+    {
+      "code": 6035,
+      "name": "FloorToleranceTooWide",
+      "msg": "floor tolerance exceeds the maximum allowed basis points"
+    },
+    {
+      "code": 6036,
+      "name": "AmountCannotCoverKeeperFee",
+      "msg": "schedule amount is too small to pay this vault's minimum keeper fee"
+    },
+    {
+      "code": 6037,
+      "name": "MissingBeginCashOut",
+      "msg": "no begin_cash_out in this transaction"
+    },
+    {
+      "code": 6038,
+      "name": "DuplicateBeginCashOut",
+      "msg": "more than one begin_cash_out in this transaction"
+    },
+    {
+      "code": 6039,
+      "name": "MissingSettleCashOut",
+      "msg": "no settle_cash_out in this transaction"
+    },
+    {
+      "code": 6040,
+      "name": "DuplicateSettleCashOut",
+      "msg": "more than one settle_cash_out in this transaction"
+    },
+    {
+      "code": 6041,
+      "name": "CashOutOrderInvalid",
+      "msg": "begin_cash_out must come before settle_cash_out"
+    },
+    {
+      "code": 6042,
+      "name": "BeginCashOutNotTopLevel",
+      "msg": "begin_cash_out must be a top level instruction, not a CPI"
+    },
+    {
+      "code": 6043,
+      "name": "SettleCashOutNotTopLevel",
+      "msg": "settle_cash_out must be a top level instruction, not a CPI"
+    },
+    {
+      "code": 6044,
+      "name": "CashOutBelowMinimum",
+      "msg": "the cash out delivered less than the minimum the user signed for"
+    },
+    {
+      "code": 6045,
+      "name": "MetadataProgramMismatch",
+      "msg": "metadata program account is not the pinned Metaplex Token Metadata program"
+    },
+    {
+      "code": 6046,
+      "name": "MetadataNameTooLong",
+      "msg": "metadata name exceeds the maximum length"
+    },
+    {
+      "code": 6047,
+      "name": "MetadataSymbolTooLong",
+      "msg": "metadata symbol exceeds the maximum length"
+    },
+    {
+      "code": 6048,
+      "name": "MetadataUriTooLong",
+      "msg": "metadata uri exceeds the maximum length"
+    }
+  ],
+  "types": [
+    {
+      "name": "CashOutReceipt",
+      "docs": [
+        "The record begin_cash_out writes and settle_cash_out consumes, for exactly",
+        "the span of one transaction, like ExecutionReceipt.",
+        "",
+        "The difference from a buy is who is being protected. In a buy the caller",
+        "is an untrusted third party spending the owner's delegated money, so the",
+        "floor has to be the owner's, never the caller's. In a cash out the signer",
+        "is the user being paid: the vault's exposure ends at begin_cash_out, where",
+        "receipts are burned against wrapper paid out exactly as in withdraw. So",
+        "min_payment_out is the user's own figure and binding them to it is correct;",
+        "the escrow and the settle protect the user from a bad route or a short",
+        "fill, not the vault from the user."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "wrapper_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "wrapper_paid",
+            "docs": [
+              "Raw wrapper paid out to the user to sell."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "payment_mint",
+            "docs": [
+              "The mint the user asked to be paid in. The user's choice, since the",
+              "user is the one being paid; the vault holds none of it."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "min_payment_out",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ExecutionReceipt",
+      "docs": [
+        "The record begin_execution writes and settle_execution consumes, at the",
+        "PDA derived from the schedule. It exists for exactly the span of one",
+        "transaction: begin_execution creates it, settle_execution closes it, and",
+        "begin_execution refuses to run unless a settle_execution for the same",
+        "schedule is present later in the same transaction, so it can never be left",
+        "behind for a later transaction to reuse.",
+        "",
+        "Everything in it was written by this program, which is what makes it worth",
+        "more than the caller supplied accounts settle_execution is otherwise",
+        "handed. Instruction introspection proves it is fresh; these fields say",
+        "what the fresh begin_execution actually did."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "schedule",
+            "type": "pubkey"
+          },
+          {
+            "name": "caller",
+            "type": "pubkey"
+          },
+          {
+            "name": "wrapper_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "caller_payment_account",
+            "docs": [
+              "Where settle_execution sends the keeper fee. Recorded because it is the",
+              "one payment account the schedule does not pin: the owner's is fixed at",
+              "create time, but the caller's is whatever the caller passed to",
+              "begin_execution, and the fee has to land in that same account."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "debited_usdc",
+            "docs": [
+              "Raw payment mint units moved out of the owner's account by",
+              "begin_execution, net of the keeper fee settle_execution still owes."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "keeper_fee",
+            "type": "u64"
+          },
+          {
+            "name": "due_ts",
+            "docs": [
+              "The schedule's next_due_ts as begin_execution saw it. settle_execution",
+              "requires it to be unchanged, so a single due date can only be consumed",
+              "by the begin_execution that opened it."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Pair",
+      "docs": [
+        "An explicit allowlist entry for one equity-unit-equivalent pair of",
+        "Token-2022 mints. mint_a is always the lexicographically smaller of the",
+        "two mint pubkeys; mint_b the larger. This ordering, not symbol matching,",
+        "is what makes the pair PDA address deterministic and collision free."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint_a",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint_b",
+            "type": "pubkey"
+          },
+          {
+            "name": "decimals_a",
+            "type": "u8"
+          },
+          {
+            "name": "decimals_b",
+            "type": "u8"
+          },
+          {
+            "name": "fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Schedule",
+      "docs": [
+        "A recurring buy. The owner sets it once and it runs until cancelled.",
+        "",
+        "Balances here are equity units, not raw wrapper amounts, for the same",
+        "reason the Vault's are: a schedule that buys NVDAx one week and NVDAon the",
+        "next has bought the same underlying both times, and only the equity unit",
+        "figure says so.",
+        "",
+        "payment_mint is not in the original state list but has to be stored. The",
+        "mint being pulled from the owner's delegated allowance decides what the",
+        "owner actually pays; if settle_execution took it from an account the",
+        "untrusted caller passes in, the caller could point every execution at a",
+        "worthless mint the owner happens to have delegated, or at a mint the owner",
+        "delegated for some other purpose entirely. It is pinned at create time,",
+        "when the owner signs, and checked on every execution.",
+        "",
+        "min_equity_units is likewise an addition. The spec has settle_execution",
+        "enforce a minimum passed by the caller, but the caller is untrusted and",
+        "will pass zero: a floor that the caller chooses protects nobody. This is",
+        "the owner's floor, and the caller's value can only tighten it, never",
+        "loosen it.",
+        "",
+        "It ratchets. A floor fixed at creation is wrong within weeks, because the",
+        "number of shares a fixed sum buys falls as the underlying rises, so a",
+        "static floor eventually rejects every honest execution and the savings plan",
+        "silently stops. After each execution the floor is reset to what that",
+        "execution actually delivered, discounted by floor_tolerance_bps, so it",
+        "tracks the price instead of drifting away from it.",
+        "",
+        "Be clear about what the ratchet does and does not buy. It bounds how much",
+        "one execution can be shorted: at most floor_tolerance_bps below the last",
+        "real result. It does not bound the total, because a caller who shorts every",
+        "execution by the full tolerance walks the floor down geometrically. There",
+        "is no oracle here to anchor against, so no self maintaining floor can stop",
+        "that. What stops it is that initial_min_equity_units is kept alongside, and",
+        "the gap between the two is plainly readable by the owner and by anything",
+        "watching the vault."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "payment_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner_payment_account",
+            "docs": [
+              "The owner's token account the executions debit. Pinned at create time",
+              "alongside the mint: the owner may hold several accounts of the same",
+              "mint, and which one funds the plan is the owner's decision, not the",
+              "decision of whoever happens to run an execution."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "schedule_index",
+            "type": "u8"
+          },
+          {
+            "name": "amount_usdc",
+            "type": "u64"
+          },
+          {
+            "name": "cadence_seconds",
+            "type": "i64"
+          },
+          {
+            "name": "next_due_ts",
+            "type": "i64"
+          },
+          {
+            "name": "min_equity_units",
+            "docs": [
+              "The live floor. Starts at the owner's signed value and is reset by each",
+              "execution to that execution's realised equity units, less the",
+              "tolerance."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "initial_min_equity_units",
+            "docs": [
+              "The owner's signed value, never written again. Kept so the ratchet's",
+              "drift from what the owner originally agreed to stays visible."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "floor_tolerance_bps",
+            "docs": [
+              "How far below the previous execution's realised equity units the next",
+              "one may land. Wide enough to absorb an ordinary move in the underlying",
+              "between two runs, narrow enough that a short delivery is rejected."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "executions",
+            "type": "u64"
+          },
+          {
+            "name": "total_usdc_spent",
+            "type": "u64"
+          },
+          {
+            "name": "total_equity_units",
+            "type": "u128"
+          },
+          {
+            "name": "active",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SwapDirection",
+      "docs": [
+        "Which side of the pair the caller is depositing."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "AToB"
+          },
+          {
+            "name": "BToA"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Vault",
+      "docs": [
+        "A vault that holds one or more Token-2022 wrappers of the same underlying",
+        "equity, and issues a single receipt token denominated in equity units",
+        "rather than in any one wrapper's raw amount. The symbol is an operator",
+        "supplied label (like \"NVDA\"); it is not verified against any on-chain",
+        "source of truth, since symbol resolution is unsafe, the same reasoning",
+        "that makes register_pair an explicit allowlist rather than a symbol",
+        "lookup. Trust comes from which wrapper mints add_wrapper has allowed in,",
+        "not from this label."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "symbol",
+            "type": "string"
+          },
+          {
+            "name": "receipt_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_program",
+            "docs": [
+              "The token program the receipt mint was created under, and the one every",
+              "wrapper added to this vault must also be owned by.",
+              "",
+              "deposit, withdraw and settle_execution all take a single token program",
+              "account and use it for both the wrapper leg and the receipt leg, so a",
+              "vault holding Token-2022 wrappers against a classic SPL receipt mint",
+              "could not be transacted at all. Rather than leave that as an invariant",
+              "an operator has to know, it is recorded here at creation and enforced",
+              "by add_wrapper, which is the only place a mismatch can be introduced."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_equity_units",
+            "docs": [
+              "Sum of equity units represented by receipt tokens outstanding, at",
+              "RECEIPT_DECIMALS fixed point. Kept in lockstep with the receipt",
+              "mint's supply: deposit increments it by exactly what it mints,",
+              "withdraw decrements it by exactly what it burns."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "keeper_fee_bps",
+            "docs": [
+              "The permissionless caller's cut of one execution, in basis points of",
+              "the schedule amount, and the least they may be paid in raw units of the",
+              "payment mint whatever the basis points work out to.",
+              "",
+              "These sit on the Vault, not in the program, because the right number is",
+              "a function of what a transaction costs to land, and that moves with",
+              "network conditions rather than with anything the program knows. A",
+              "quarter of a percent of a five dollar buy is about a cent, which does",
+              "not cover a priority fee on a busy slot, and a keeper that cannot cover",
+              "its costs simply stops running schedules. The vault authority retunes",
+              "both with set_keeper_fee; neither needs a program upgrade.",
+              "",
+              "What the authority cannot do is raise the real cost past",
+              "MAX_KEEPER_FEE_BPS, which is enforced in the program on every",
+              "execution. The money being paid out belongs to schedule owners who",
+              "never agreed to a fee change, so the ceiling is not the authority's to",
+              "move."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "keeper_fee_min",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Wrapper",
+      "docs": [
+        "An explicit allowlist entry for one wrapper mint accepted by a Vault.",
+        "Its existence at the PDA derived from (vault, mint) is what deposit and",
+        "withdraw rely on to reject unregistered mints: an uninitialized account",
+        "at that address fails to deserialize, the same allowlist mechanism",
+        "register_pair's Pair PDA provides for swap."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "decimals",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}
