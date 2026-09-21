@@ -48,7 +48,8 @@ All from the environment. Nothing is committed.
 | `KEEPER_KEYPAIR` | yes | | Path to the keeper's keypair json |
 | `PARITAS_ADDRESS_BOOK` | no | `./devnet.json` | Address book from `scripts/setup-devnet.ts` |
 | `PARITAS_IDL` | no | `./target/idl/paritas.json` | Anchor IDL |
-| `KEEPER_POLL_SECONDS` | no | `60` | Poll interval |
+| `KEEPER_POLL_SECONDS` | no | `60` | Poll interval, ignored with `--once` |
+| `KEEPER_ONCE` | no | | Set for a single pass, same as `--once` |
 | `KEEPER_PRICE_SOURCE` | no | `flat` | `flat` or `pyth` |
 | `KEEPER_QUOTE_USDC_PER_SHARE` | no | `5` | The flat price per share |
 | `PYTH_API_KEY` | when `pyth` | | Hermes key for price reads. Never committed. |
@@ -93,7 +94,84 @@ websocket, and every wait is bounded by `KEEPER_CONFIRM_TIMEOUT_SECONDS`.
 
 No addresses are configured. They all come from the address book.
 
+## Running one pass
+
+`--once` makes one sweep over everything due and exits, instead of polling
+forever. `KEEPER_ONCE` does the same for a caller that finds an environment
+variable easier than an argument.
+
+```bash
+npm run keeper:build
+KEEPER_RPC_URL=... KEEPER_KEYPAIR=... node dist/keeper/index.js --once
+```
+
+The exit status is the whole point of the mode, so it is worth being exact
+about it. It is non-zero only when the run could not do its job:
+
+- **Nothing due**: exit 0. This is the ordinary outcome of a five minute
+  schedule and is not a failure.
+- **Schedules executed**: exit 0.
+- **Schedules skipped**: exit 0. A skip is an unusable price, a buy too small
+  to round to shares, or an owner who cannot currently pay. None is the
+  keeper's fault and all are still true or not next time.
+- **A schedule failed on its own terms**: exit 0, counted and logged. A revoked
+  delegation or a spent balance would otherwise keep the job red until that one
+  owner acted, which teaches everyone to ignore a red job.
+- **The pass could not run at all**: exit 1. A missing variable, an unreadable
+  keypair, an address book that disagrees with the IDL, or an RPC that stayed
+  unreachable past the retries.
+
+Every run logs one summary line, `N executed, N skipped, N failed of N due`, so
+a green run that is quietly doing nothing is still visible as one.
+
+## Running on GitHub Actions
+
+`.github/workflows/keeper.yml` replaces the droplet. It runs `--once` every
+five minutes, which is the shortest interval GitHub accepts; scheduled runs are
+queued on shared capacity and are often late, which is survivable here because
+a schedule whose keeper is late is late rather than lost.
+
+Two secrets, both under **Settings, Secrets and variables, Actions,
+Repository secrets** in this repository:
+
+| Secret | Contents |
+| --- | --- |
+| `KEEPER_KEYPAIR` | The keeper keypair **json array itself**, the whole `[12,34,...]` contents of the file, not a path |
+| `RPC_URL` | The RPC endpoint |
+
+Note the overload: as an environment variable `KEEPER_KEYPAIR` is a path, but
+as a secret it is the file's contents. The workflow writes the secret to a
+`mktemp` file under `umask 077` and passes that path to the keeper, then
+removes it in an `if: always()` step so a failed run cleans up too.
+
+Neither value is printed. The keeper logs the endpoint as its origin only,
+since a paid endpoint carries its key in the url, and both values are passed
+through the environment rather than on a command line.
+
+There is deliberately no `pull_request` trigger. A workflow that runs on
+`pull_request` runs for forks, and a fork's branch is written by whoever opened
+the pull request, so giving that secrets hands them over. The triggers are
+`schedule` and `workflow_dispatch`, the latter being the **Run workflow**
+button on the Actions tab.
+
+A `concurrency` group named `keeper` stops two runs overlapping, with
+`cancel-in-progress: false` so a late run queues rather than killing a keeper
+between its `begin_execution` and its `settle_execution`.
+
+**The IDL is committed for this.** The keeper needs `target/idl/paritas.json`,
+which is gitignored, so a fresh CI checkout would not have one. `keeper/paritas-idl.json`
+is a committed copy and the workflow points `PARITAS_IDL` at it. Regenerate it
+with `npm run keeper:idl` whenever the program changes, or CI will run against
+a stale IDL.
+
+The keeper still needs SOL for fees and wrapper tokens to deliver, exactly as
+on the droplet. Nothing about the schedule changes that.
+
 ## Deploying to the droplet
+
+Superseded by the workflow above, kept for running the keeper as a long lived
+process.
+
 
 A 512MB Ubuntu box. Build locally, ship the compiled JS: no Rust toolchain and
 no TypeScript compile on the droplet.

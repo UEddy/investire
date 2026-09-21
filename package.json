@@ -8,7 +8,8 @@
     "keeper:build": "tsc -p tsconfig.keeper.json",
     "keeper:start": "node dist/keeper/index.js",
     "keeper:dev": "ts-node --project tsconfig.scripts.json keeper/index.ts",
-    "demo": "ts-node --project tsconfig.scripts.json scripts/demo.ts"
+    "demo": "ts-node --project tsconfig.scripts.json scripts/demo.ts",
+    "keeper:idl": "anchor idl build > target/idl/paritas.json && cp target/idl/paritas.json keeper/paritas-idl.json"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

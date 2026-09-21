@@ -1,0 +1,105 @@
+# Runs the Investire keeper on a schedule, in place of the systemd unit on the
+# droplet. One pass per run: check what is due, execute it, exit.
+#
+# There is no pull_request trigger, and that is deliberate rather than an
+# omission. A workflow that runs on pull_request runs for forks, and anything
+# that runs for forks must never be given secrets, because the branch it runs
+# is written by whoever opened the pull request. Keeping the triggers to
+# schedule and workflow_dispatch means this only ever runs code that is already
+# on a branch of this repository.
+name: keeper
+
+on:
+  schedule:
+    # Every five minutes, which is the shortest interval GitHub accepts. It is
+    # a floor and not a promise: scheduled runs are queued on shared capacity
+    # and are routinely late, sometimes by a lot. That is fine here. A schedule
+    # whose keeper is late is late, not lost, and the next run picks it up.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+# Two runs must never overlap. Without this, a run that takes longer than five
+# minutes would still be executing when the next one starts, and both would
+# read the same schedules as due and race to execute them. The program settles
+# that race correctly, since next_due_ts has already moved by the time the
+# second transaction lands, but the second run would spend fees losing it.
+#
+# cancel-in-progress is false on purpose. Cancelling mid run would kill a
+# keeper between its begin_execution and its settle_execution, which is the one
+# moment it holds an escrow open. Queueing behind the running one is always the
+# right answer here.
+concurrency:
+  group: keeper
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    # A pass is seconds of work. This only ever trips if an RPC is hanging, and
+    # it needs to stay well under the five minute schedule so a stuck run
+    # cannot pile up behind the next one.
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the keeper
+        run: npm run keeper:build
+
+      - name: Run one pass
+        env:
+          # Both are passed through the environment, never on a command line,
+          # where they would show up in the process list and in any shell
+          # tracing. GitHub masks registered secrets in logs, but that is a
+          # backstop: the keeper prints neither, and logs the RPC endpoint as
+          # its origin only, since a paid endpoint carries its key in the url.
+          KEEPER_KEYPAIR_JSON: ${{ secrets.KEEPER_KEYPAIR }}
+          KEEPER_RPC_URL: ${{ secrets.RPC_URL }}
+          PARITAS_IDL: keeper/paritas-idl.json
+        run: |
+          set -euo pipefail
+
+          if [ -z "${KEEPER_KEYPAIR_JSON}" ]; then
+            echo "KEEPER_KEYPAIR is empty or unset. Add it under Settings, Secrets and variables, Actions." >&2
+            exit 1
+          fi
+          if [ -z "${KEEPER_RPC_URL}" ]; then
+            echo "RPC_URL is empty or unset. Add it under Settings, Secrets and variables, Actions." >&2
+            exit 1
+          fi
+
+          # The keeper wants a path, and the secret is the file's contents, so
+          # it has to be written down somewhere. umask first, so it is never
+          # briefly world readable between creation and a later chmod.
+          umask 077
+          keypair="$(mktemp -d)/keeper.json"
+          printf '%s' "${KEEPER_KEYPAIR_JSON}" > "${keypair}"
+          echo "KEEPER_KEYPAIR_FILE=${keypair}" >> "${GITHUB_ENV}"
+
+          KEEPER_KEYPAIR="${keypair}" node dist/keeper/index.js --once
+
+      - name: Remove the keypair
+        # always(), because the point of this step is the run that failed. The
+        # runner is thrown away afterwards, but a keypair that outlives the step
+        # that needed it is available to every step after it, and that is the
+        # part worth not relying on luck for.
+        if: always()
+        run: |
+          if [ -n "${KEEPER_KEYPAIR_FILE:-}" ] && [ -f "${KEEPER_KEYPAIR_FILE}" ]; then
+            shred -u "${KEEPER_KEYPAIR_FILE}" 2>/dev/null || rm -f "${KEEPER_KEYPAIR_FILE}"
+            rmdir "$(dirname "${KEEPER_KEYPAIR_FILE}")" 2>/dev/null || true
+            echo "keypair removed"
+          else
+            echo "no keypair file to remove"
+          fi

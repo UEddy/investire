@@ -20,7 +20,8 @@
  *   KEEPER_KEYPAIR              required, path to the keeper's keypair json
  *   PARITAS_ADDRESS_BOOK        default ./devnet.json
  *   PARITAS_IDL                 default ./target/idl/paritas.json
- *   KEEPER_POLL_SECONDS         default 60
+ *   KEEPER_POLL_SECONDS         default 60, ignored with --once
+ *   KEEPER_ONCE                 set to run a single pass, same as --once
  *   KEEPER_COMPUTE_UNIT_LIMIT   default 400000
  *   KEEPER_CONFIRM_TIMEOUT_SECONDS default 60, see sendAndConfirm
  *   KEEPER_PRICE_SOURCE         "flat" (default) or "pyth"
@@ -29,6 +30,12 @@
  *   PYTH_HERMES_URL             default https://pyth.dourolabs.app/hermes
  *   KEEPER_MAX_PRICE_AGE_SECONDS default 60, pyth only, see priceProblem
  *   KEEPER_MAX_CONFIDENCE_PERCENT default 1, pyth only, see priceProblem
+ *
+ * Two modes. By default it polls forever, which is what a long lived process
+ * under systemd wants. With --once, or KEEPER_ONCE set, it makes one pass over
+ * everything due and exits, which is what a scheduled CI job wants: the
+ * schedule lives in cron rather than in this process, and nothing has to stay
+ * up between runs.
  *
  * Every vault in the address book is served. Each delivers its own first
  * wrapper, which is the one setup-devnet.ts stocks the keeper with, at the
@@ -102,6 +109,14 @@ const ADDRESS_BOOK_PATH =
 const IDL_PATH =
   process.env.PARITAS_IDL ?? path.resolve("target/idl/paritas.json");
 const POLL_SECONDS = optionalNumber("KEEPER_POLL_SECONDS", 60);
+
+/**
+ * One pass, then exit. The distinction that matters for a scheduled run is
+ * between "nothing was due", which is the ordinary case and a success, and a
+ * failure to find out, which is not. See main.
+ */
+const RUN_ONCE =
+  process.argv.includes("--once") || Boolean(process.env.KEEPER_ONCE);
 const COMPUTE_UNIT_LIMIT = optionalNumber("KEEPER_COMPUTE_UNIT_LIMIT", 400_000);
 /**
  * Where delivery prices come from. Pyth is integrated and tested against a
@@ -128,6 +143,26 @@ const CONFIRM_TIMEOUT_SECONDS = optionalNumber("KEEPER_CONFIRM_TIMEOUT_SECONDS",
  * else worth having, and a 512MB droplet does not need a logging framework to
  * print a sentence.
  */
+/**
+ * An RPC endpoint reduced to its origin, for logging.
+ *
+ * Paid endpoints carry the API key in the url, in the path for some providers
+ * and in the query for others, so the whole url is a credential and printing
+ * it leaks one. This keeps the part that identifies which provider is in use,
+ * which is the only part worth logging, and drops everything that could
+ * authenticate as us. Under CI the endpoint is a repository secret and the
+ * runner would usually mask it, but that masking is a backstop and not a
+ * reason to print a secret in the first place.
+ */
+function redactUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    return `${url.protocol}//${url.host}${url.pathname === "/" ? "" : "/..."}`;
+  } catch {
+    return "(unparseable url)";
+  }
+}
+
 function log(level: "info" | "warn" | "error", message: string): void {
   const line = `${new Date().toISOString()} ${level
     .toUpperCase()
@@ -557,17 +592,25 @@ function schedulePdaOf(ctx: Context, schedule: ScheduleAccount): PublicKey {
   return pda;
 }
 
+/**
+ * Runs one due schedule. Returns true when an execution actually landed, and
+ * false when the schedule was passed over for a reason that is nobody's fault
+ * and will still be true or not next time: an unusable price, a buy too small
+ * to round to any shares, an owner who cannot currently pay. Skips are not
+ * failures and are not counted as executions either, which matters for the
+ * summary a scheduled run prints.
+ */
 async function execute(
   ctx: Context,
   schedulePda: PublicKey,
   schedule: ScheduleAccount,
   quote: PythQuote | undefined
-): Promise<void> {
+): Promise<boolean> {
   const now = Math.floor(Date.now() / 1000);
   const unusable = priceProblem(quote, now);
   if (unusable || !quote) {
     log("warn", `skip ${schedulePda.toBase58()}: ${unusable}`);
-    return;
+    return false;
   }
 
   const amount = BigInt(schedule.amountUsdc.toString());
@@ -594,7 +637,7 @@ async function execute(
   );
   if (delivery === 0n) {
     log("warn", `skip ${schedulePda.toBase58()}: buy rounds to no shares`);
-    return;
+    return false;
   }
   const expectedEquityUnits = toEquityUnits(
     delivery,
@@ -605,7 +648,7 @@ async function execute(
   const blocked = await preflight(ctx, schedule, delivery, expectedEquityUnits);
   if (blocked) {
     log("warn", `skip ${schedulePda.toBase58()}: ${blocked}`);
-    return;
+    return false;
   }
 
   const [escrowPda] = PublicKey.findProgramAddressSync(
@@ -758,14 +801,30 @@ async function execute(
       } ` +
       `sig=${signature}`
   );
+
+  return true;
 }
 
 // --- the poll loop ---------------------------------------------------------
 
+/**
+ * What one pass did. Returned rather than logged alone because --once turns
+ * this into the run's exit status, and "nothing was due" has to be tellable
+ * from "could not find out what was due".
+ */
+interface PassResult {
+  due: number;
+  executed: number;
+  skipped: number;
+  failed: number;
+  /** Set when prices could not be read, which leaves everything due. */
+  pricesUnavailable: boolean;
+}
+
 async function pollOnce(
   contexts: Context[],
   activeOffset: number
-): Promise<void> {
+): Promise<PassResult> {
   const first = contexts[0];
   const accounts = await withRetry(
     "fetch due schedules",
@@ -796,7 +855,7 @@ async function pollOnce(
     );
 
   if (due.length === 0) {
-    return;
+    return { due: 0, executed: 0, skipped: 0, failed: 0, pricesUnavailable: false };
   }
   log("info", `${due.length} schedule(s) due`);
 
@@ -820,18 +879,33 @@ async function pollOnce(
         : flatQuotes(feeds, first.book.payment.decimals);
   } catch (err) {
     log("warn", `prices unavailable (${describeError(err)}), leaving ${due.length} due`);
-    return;
+    return {
+      due: due.length,
+      executed: 0,
+      skipped: 0,
+      failed: 0,
+      pricesUnavailable: true,
+    };
   }
+
+  let executed = 0;
+  let skipped = 0;
+  let failed = 0;
 
   for (const entry of due) {
     if (stopping) {
       log("info", "stopping, leaving the rest for the next run");
-      return;
+      break;
     }
     const ctx = byVault.get(entry.account.vault.toBase58())!;
     try {
-      await execute(ctx, entry.publicKey, entry.account, quotes[ctx.priceFeedId]);
+      if (await execute(ctx, entry.publicKey, entry.account, quotes[ctx.priceFeedId])) {
+        executed++;
+      } else {
+        skipped++;
+      }
     } catch (err) {
+      failed++;
       // One schedule's problem is its own. A revoked delegation, an owner who
       // spent their balance, a slot where the swap leg reverts: none of it is
       // a reason to stop serving everybody else.
@@ -841,6 +915,8 @@ async function pollOnce(
       );
     }
   }
+
+  return { due: due.length, executed, skipped, failed, pricesUnavailable: false };
 }
 
 async function main(): Promise<void> {
@@ -923,7 +999,7 @@ async function main(): Promise<void> {
   const activeOffset = offsetOfField(idl, "Schedule", "active");
 
   log("info", `keeper ${keeper.publicKey.toBase58()}`);
-  log("info", `rpc ${RPC_URL}`);
+  log("info", `rpc ${redactUrl(RPC_URL)}`);
   log("info", `program ${book.programId}`);
   for (const ctx of contexts) {
     log(
@@ -934,7 +1010,9 @@ async function main(): Promise<void> {
   }
   log(
     "info",
-    `polling every ${POLL_SECONDS}s, active flag at byte ${activeOffset}`
+    RUN_ONCE
+      ? `single pass, active flag at byte ${activeOffset}`
+      : `polling every ${POLL_SECONDS}s, active flag at byte ${activeOffset}`
   );
   log(
     "info",
@@ -956,33 +1034,87 @@ async function main(): Promise<void> {
     );
   }
 
-  // The keeper's own token accounts, created once at startup rather than
-  // checked on every execution.
-  await withRetry(
-    "keeper token accounts",
-    () => {
-      const tx = new Transaction().add(
-        createAssociatedTokenAccountIdempotentInstruction(
-          keeper.publicKey,
-          keeperPaymentAccount,
-          keeper.publicKey,
-          paymentMint,
-          TOKEN_PROGRAM_ID
-        ),
-        ...contexts.map((ctx) =>
-          createAssociatedTokenAccountIdempotentInstruction(
-            keeper.publicKey,
-            ctx.keeperWrapperAccount,
-            keeper.publicKey,
-            ctx.wrapperMint,
-            TOKEN_2022_PROGRAM_ID
-          )
-        )
-      );
-      return sendAndConfirm(connection, tx, [keeper]);
+  // The keeper's own token accounts. Idempotent, but a transaction that
+  // creates nothing still costs a fee and a confirmation wait, and under
+  // --once this runs on every scheduled invocation rather than once per boot.
+  // So the accounts are read first and the transaction is only sent when one
+  // is actually missing, which after the first run is never.
+  const wanted = [
+    {
+      address: keeperPaymentAccount,
+      mint: paymentMint,
+      program: TOKEN_PROGRAM_ID,
     },
-    retryOptions({ idempotent: true })
+    ...contexts.map((ctx) => ({
+      address: ctx.keeperWrapperAccount,
+      mint: ctx.wrapperMint,
+      program: TOKEN_2022_PROGRAM_ID,
+    })),
+  ];
+
+  const missing = await withRetry(
+    "keeper token accounts",
+    async () => {
+      const infos = await connection.getMultipleAccountsInfo(
+        wanted.map((entry) => entry.address)
+      );
+      return wanted.filter((_, index) => infos[index] === null);
+    },
+    retryOptions()
   );
+
+  if (missing.length > 0) {
+    log("info", `creating ${missing.length} keeper token account(s)`);
+    await withRetry(
+      "create keeper token accounts",
+      () => {
+        const tx = new Transaction().add(
+          ...missing.map((entry) =>
+            createAssociatedTokenAccountIdempotentInstruction(
+              keeper.publicKey,
+              entry.address,
+              keeper.publicKey,
+              entry.mint,
+              entry.program
+            )
+          )
+        );
+        return sendAndConfirm(connection, tx, [keeper]);
+      },
+      retryOptions({ idempotent: true })
+    );
+  }
+
+  if (RUN_ONCE) {
+    // Deliberately not wrapped. A pass that cannot even read the schedules is
+    // the one thing a scheduled run must fail on, so the throw propagates to
+    // main's catch and becomes a non-zero exit. Everything short of that is a
+    // successful run, including the ordinary case of nothing being due.
+    const result = await pollOnce(contexts, activeOffset);
+
+    if (result.pricesUnavailable) {
+      // Transient by nature, and it leaves every schedule due, so the next run
+      // in five minutes picks them up. Reported as a warning rather than a
+      // failure, since a red run here would mean a red run for every price
+      // outage, however brief.
+      log("warn", `prices unavailable, ${result.due} left due for the next run`);
+    } else if (result.due === 0) {
+      log("info", "nothing due");
+    } else {
+      log(
+        "info",
+        `${result.executed} executed, ${result.skipped} skipped, ` +
+          `${result.failed} failed of ${result.due} due`
+      );
+    }
+
+    // Note what this does not do: a schedule that failed on its own terms, an
+    // owner who revoked the delegation or spent their balance, does not fail
+    // the run. Those are expected and self correcting, and a job that went red
+    // for one of them would be red until that owner acted, which teaches
+    // everyone to ignore it. They are counted and logged above instead.
+    return;
+  }
 
   while (!stopping) {
     try {
