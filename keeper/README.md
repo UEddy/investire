@@ -58,6 +58,16 @@ All from the environment. Nothing is committed.
 | `KEEPER_MAX_CONFIDENCE_PERCENT` | no | `1` | Wider confidence is not traded on |
 | `KEEPER_CONFIRM_TIMEOUT_SECONDS` | no | `60` | Longest wait on one confirmation |
 
+`KEEPER_RPC_URL` and `KEEPER_KEYPAIR` are validated before anything else in
+the process runs. Surrounding whitespace and quotes are stripped from both
+first, since a value pasted into a CI secret box often arrives wrapped in the
+quotes it was copied with and neither is visible afterwards. The endpoint must
+then start with `https://`, and the keypair must parse as a json array of 64
+whole numbers between 0 and 255. A failure names the secret to go and fix and
+never prints either value, in whole or in part, because a scheduled job writes
+its log on every run and keeps it. For the same reason the endpoint is not
+logged at all, not even its host.
+
 Every vault in the address book is served, each delivering its own first
 wrapper. `scripts/setup-devnet.ts` stocks the keeper with 100 of each, reading
 the keeper's public key from `KEEPER_PUBKEY` or `.devnet-keys/keeper.json`.

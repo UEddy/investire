@@ -102,8 +102,37 @@ function optionalNumber(name: string, fallback: number): number {
   return value;
 }
 
-const RPC_URL = required("KEEPER_RPC_URL");
-const KEYPAIR_PATH = required("KEEPER_KEYPAIR");
+/**
+ * Strips what a copy and paste into a secret box leaves behind.
+ *
+ * A value pasted into a CI secret commonly arrives wrapped in the quotes it
+ * was copied with, or with a trailing newline from the editor it came out of.
+ * Neither is visible in the box afterwards and neither survives being read as
+ * a url: web3.js rejected one with "Endpoint URL must start with http: or
+ * https:", which names the right problem but cannot say which secret it came
+ * from, because by then it is just a string.
+ *
+ * Both are stripped rather than rejected, since both are plainly the same
+ * value with packaging around it, and rejecting them would only tell someone
+ * their value is wrong when it is not.
+ */
+function cleanSecret(raw: string): string {
+  const trimmed = raw.trim();
+  const quoted =
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'")));
+  return quoted ? trimmed.slice(1, -1).trim() : trimmed;
+}
+
+// Not required() like the rest: a throw out here happens while the module is
+// still being evaluated, so it escapes main's catch and reaches the operator
+// as an uncaught stack trace. These two are the ones most likely to be wrong,
+// and they are the ones whose failure has to read as an instruction. They are
+// resolved without complaint here and checked in validateSecrets, which runs
+// inside main where a clear message is possible.
+const RPC_URL = cleanSecret(process.env.KEEPER_RPC_URL ?? "");
+const KEYPAIR_PATH = cleanSecret(process.env.KEEPER_KEYPAIR ?? "");
 const ADDRESS_BOOK_PATH =
   process.env.PARITAS_ADDRESS_BOOK ?? path.resolve("devnet.json");
 const IDL_PATH =
@@ -143,26 +172,6 @@ const CONFIRM_TIMEOUT_SECONDS = optionalNumber("KEEPER_CONFIRM_TIMEOUT_SECONDS",
  * else worth having, and a 512MB droplet does not need a logging framework to
  * print a sentence.
  */
-/**
- * An RPC endpoint reduced to its origin, for logging.
- *
- * Paid endpoints carry the API key in the url, in the path for some providers
- * and in the query for others, so the whole url is a credential and printing
- * it leaks one. This keeps the part that identifies which provider is in use,
- * which is the only part worth logging, and drops everything that could
- * authenticate as us. Under CI the endpoint is a repository secret and the
- * runner would usually mask it, but that masking is a backstop and not a
- * reason to print a secret in the first place.
- */
-function redactUrl(raw: string): string {
-  try {
-    const url = new URL(raw);
-    return `${url.protocol}//${url.host}${url.pathname === "/" ? "" : "/..."}`;
-  } catch {
-    return "(unparseable url)";
-  }
-}
-
 function log(level: "info" | "warn" | "error", message: string): void {
   const line = `${new Date().toISOString()} ${level
     .toUpperCase()
@@ -919,15 +928,122 @@ async function pollOnce(
   return { due: due.length, executed, skipped, failed, pricesUnavailable: false };
 }
 
+/**
+ * Checks the two secrets before anything else in the process does.
+ *
+ * Both failures used to surface far from their cause. An unset or malformed
+ * endpoint reached web3.js, which said "Endpoint URL must start with http: or
+ * https:" without naming a secret, because at that point it has only a string.
+ * A keypair that was not 64 numbers reached Keypair.fromSecretKey, whose
+ * complaint is about array lengths. Neither tells the person reading a CI log
+ * which repository secret to go and fix, which is the only thing they need.
+ *
+ * Nothing here prints either value, in whole or in part, in a message or
+ * anywhere else. What is reported is the shape of the problem: empty, wrong
+ * scheme, not json, not an array, the wrong number of entries. Those name the
+ * fix without putting a credential in a log that a scheduled job writes on
+ * every run and keeps.
+ *
+ * KEEPER_KEYPAIR is the one name doing two jobs. In CI it is the repository
+ * secret holding the key material itself, which the workflow writes to a temp
+ * file; to this process it is the path to that file. So the message has to
+ * name both, or it sends someone to look at the wrong thing.
+ *
+ * Returns the bytes it validated rather than just approving them, so there is
+ * exactly one place the file is read and parsed. Validating in one place and
+ * reading again somewhere else is how a check and the thing it is supposed to
+ * protect drift apart: the quote stripping below would have applied to the
+ * check and not to the load.
+ */
+function validateSecrets(): Uint8Array {
+  if (RPC_URL === "") {
+    throw new Error(
+      "the RPC_URL secret is empty or unset (KEEPER_RPC_URL in the " +
+        "environment). Set it to an https endpoint."
+    );
+  }
+  if (!RPC_URL.startsWith("https://")) {
+    throw new Error(
+      "the RPC_URL secret is not an https url (KEEPER_RPC_URL in the " +
+        "environment). It must start with https://. Surrounding quotes and " +
+        "whitespace are already stripped, so something else is wrong with it. " +
+        "The value is not shown here on purpose."
+    );
+  }
+
+  if (KEYPAIR_PATH === "") {
+    throw new Error(
+      "the KEEPER_KEYPAIR secret is empty or unset. In CI it holds the " +
+        "keypair json itself, which the workflow writes to a file; to this " +
+        "process it is the path to that file."
+    );
+  }
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(KEYPAIR_PATH, "utf8");
+  } catch {
+    // The path, not the key material, so it is safe to name.
+    throw new Error(
+      `cannot read the keypair at ${KEYPAIR_PATH}. In CI this file is written ` +
+        "from the KEEPER_KEYPAIR secret by the workflow."
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleanSecret(raw));
+  } catch {
+    throw new Error(
+      "the KEEPER_KEYPAIR secret is not valid json. It must be the keypair " +
+        "array as solana-keygen writes it, like [12,34,...]. The value is " +
+        "not shown here on purpose."
+    );
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(
+      "the KEEPER_KEYPAIR secret is not a json array. It must be the keypair " +
+        "array as solana-keygen writes it, 64 numbers."
+    );
+  }
+  if (parsed.length !== 64) {
+    // A count is a shape, not the key. Saying 32 rather than 64 is what tells
+    // someone they pasted a public key or a truncated file.
+    throw new Error(
+      `the KEEPER_KEYPAIR secret is a json array of ${parsed.length} entries, ` +
+        "and a solana keypair is 64."
+    );
+  }
+  if (
+    !parsed.every(
+      (entry) =>
+        typeof entry === "number" && Number.isInteger(entry) && entry >= 0 && entry <= 255
+    )
+  ) {
+    throw new Error(
+      "the KEEPER_KEYPAIR secret contains entries that are not whole numbers " +
+        "between 0 and 255, so it is not a keypair. No entry is shown here on " +
+        "purpose."
+    );
+  }
+
+  return Uint8Array.from(parsed as number[]);
+}
+
 async function main(): Promise<void> {
+  // First, before the address book, the idl, the keypair or any connection.
+  // Everything below assumes these two are usable.
+  const secretKey = validateSecrets();
+
   const book: AddressBook = JSON.parse(
     fs.readFileSync(ADDRESS_BOOK_PATH, "utf8")
   );
   const idl: anchor.Idl = JSON.parse(fs.readFileSync(IDL_PATH, "utf8"));
 
-  const keeper = Keypair.fromSecretKey(
-    Uint8Array.from(JSON.parse(fs.readFileSync(KEYPAIR_PATH, "utf8")))
-  );
+  // From validateSecrets, not read again here: one read, one parse, one set of
+  // rules about what is acceptable.
+  const keeper = Keypair.fromSecretKey(secretKey);
 
   const connection = new Connection(RPC_URL, "confirmed");
   const provider = new anchor.AnchorProvider(
@@ -999,7 +1115,10 @@ async function main(): Promise<void> {
   const activeOffset = offsetOfField(idl, "Schedule", "active");
 
   log("info", `keeper ${keeper.publicKey.toBase58()}`);
-  log("info", `rpc ${redactUrl(RPC_URL)}`);
+  // Deliberately not the endpoint, not even its host. A paid endpoint carries
+  // its key in the url, and a scheduled job writes this log on every run and
+  // keeps it. That it validated is the part worth recording.
+  log("info", "rpc endpoint configured");
   log("info", `program ${book.programId}`);
   for (const ctx of contexts) {
     log(
