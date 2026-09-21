@@ -33,7 +33,8 @@ import {
   assetBySymbol,
 } from "../src/lib/config";
 import {
-  RUNS_FUNDED,
+  runsFunded,
+  fundedAmount,
   buildCancelPlanTransaction,
   buildChangePlanTransaction,
   buildCreatePlanTransaction,
@@ -330,12 +331,17 @@ async function main(): Promise<void> {
   if (funding.delegate !== change.planAddress.toBase58()) {
     fail(`delegate is ${funding.delegate}, expected the replacement plan`);
   }
-  if (funding.delegatedAmount !== changedAmount * BigInt(RUNS_FUNDED)) {
+  // Sized against the replacement plan's own pace, which is monthly here.
+  const expectedAllowance = fundedAmount(changedAmount, MONTH_SECONDS);
+  if (funding.delegatedAmount !== expectedAllowance) {
     fail(
-      `allowance is ${funding.delegatedAmount}, expected ${changedAmount * BigInt(RUNS_FUNDED)}`,
+      `allowance is ${funding.delegatedAmount}, expected ${expectedAllowance}`,
     );
   }
-  ok(`the delegation moved to the replacement, allowing ${RUNS_FUNDED} buys and no more`);
+  ok(
+    `the delegation moved to the replacement, allowing ` +
+      `${runsFunded(MONTH_SECONDS)} buys and no more`,
+  );
 
   // --- taking shares out ---------------------------------------------------
   const nvda = ASSETS[0];

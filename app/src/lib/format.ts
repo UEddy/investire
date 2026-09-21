@@ -262,3 +262,47 @@ export function relativePercent(a: bigint, b: bigint): string {
   const text = scaled.toPrecision(4);
   return `${text.includes(".") ? text.replace(/\.?0+$/, "") : text}%`;
 }
+
+/**
+ * How many more buys a pot of money pays for, and how worried to be about it.
+ *
+ * Two different things can run out under a plan and they are not
+ * interchangeable: the dollars sitting in the saver's wallet, and the approval
+ * that lets the plan spend them. Either one reaching zero stops the buying,
+ * and the fix is different in each case, so they are counted the same way here
+ * and reported separately wherever they are shown.
+ *
+ * Whole buys only. A balance covering two and a half buys covers two, because
+ * the half is not a buy that will happen and saying "2.5" invites the saver to
+ * think it is.
+ */
+export type CoverageLevel = "ok" | "low" | "empty";
+
+export interface Coverage {
+  buys: number;
+  level: CoverageLevel;
+}
+
+/**
+ * Warn at three or fewer remaining. Far enough ahead that a daily saver has
+ * three days to act and a monthly saver three months, and not so far that the
+ * warning is background noise for the whole life of the plan.
+ */
+export const COVERAGE_WARN_AT = 3;
+
+export function coverage(available: bigint, amount: bigint): Coverage {
+  if (amount <= 0n) {
+    return { buys: 0, level: "empty" };
+  }
+  const buys = Number(available / amount);
+  if (buys === 0) {
+    // Not "running low". The next buy cannot happen.
+    return { buys, level: "empty" };
+  }
+  return { buys, level: buys <= COVERAGE_WARN_AT ? "low" : "ok" };
+}
+
+/** "1 more buy" / "4 more buys", so no caller has to think about the plural. */
+export function buysPhrase(buys: number): string {
+  return buys === 1 ? "1 more buy" : `${buys} more buys`;
+}

@@ -393,6 +393,7 @@ export function useSavings(): SavingsState {
           owner,
           planAddress: new PublicKey(plan.address),
           amount: plan.amount,
+          cadenceSeconds: plan.cadenceSeconds,
         }),
       ),
     [run],

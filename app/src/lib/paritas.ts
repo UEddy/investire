@@ -42,12 +42,48 @@ export const PROGRAM_ID = new PublicKey(book.programId);
 export const PAYMENT_MINT = new PublicKey(book.payment.mint);
 
 /**
- * Buys a plan is funded for up front, whatever its cadence. Counted in buys
- * rather than weeks so the permission the saver grants is stated in the one
- * unit that does not change meaning between a daily and a monthly plan: twelve
- * buys at the amount they chose, and not a cent more.
+ * Three months, at the thirty day month this app uses everywhere else.
+ *
+ * The horizon is time, not a count, because a count means something different
+ * at every pace. Twelve buys is a year of monthly saving and under a fortnight
+ * of daily saving, so a flat twelve sent daily savers back to re-approve every
+ * twelve days while monthly savers were untroubled for a year. The thing a
+ * saver actually wants bounded is how long they can forget about it.
  */
-export const RUNS_FUNDED = 12;
+const FUNDED_HORIZON_SECONDS = 3 * 30 * 24 * 60 * 60;
+
+/**
+ * The fewest buys any approval covers, whatever the pace.
+ *
+ * At a monthly pace three months is three buys, which is a thin allowance to
+ * hand an automatic plan: one missed renewal and it stops. This floor keeps
+ * the old twelve for the slow paces, so the rule only ever lengthens the
+ * horizon and never shortens it.
+ */
+export const MIN_RUNS_FUNDED = 12;
+
+/**
+ * Buys a plan is funded for up front: enough for three months at its own pace,
+ * and never fewer than MIN_RUNS_FUNDED.
+ *
+ * Rounded up, because covering "at least three months" and landing a day short
+ * of the last buy in the window would be exactly the surprise this is meant to
+ * remove.
+ */
+export function runsFunded(cadenceSeconds: number): number {
+  if (!Number.isFinite(cadenceSeconds) || cadenceSeconds <= 0) {
+    return MIN_RUNS_FUNDED;
+  }
+  return Math.max(
+    MIN_RUNS_FUNDED,
+    Math.ceil(FUNDED_HORIZON_SECONDS / cadenceSeconds),
+  );
+}
+
+/** What runsFunded comes to in money, which is what the saver approves. */
+export function fundedAmount(amount: bigint, cadenceSeconds: number): bigint {
+  return amount * BigInt(runsFunded(cadenceSeconds));
+}
 
 /**
  * Mirrors of the program's own limits, from programs/paritas/src/state.rs.
@@ -230,7 +266,7 @@ export function planProblem(params: {
   if (amount < limits.minAmount) {
     return `The smallest plan is ${dollars(limits.minAmount, moneyDecimals)} each time.`;
   }
-  if (amount * BigInt(RUNS_FUNDED) > U64_MAX) {
+  if (fundedAmount(amount, cadenceSeconds) > U64_MAX) {
     return "That amount is too large.";
   }
   if (amount > cash) {
@@ -600,7 +636,7 @@ async function newPlanInstructions(params: {
       PAYMENT_MINT,
       plan,
       owner,
-      amount * BigInt(RUNS_FUNDED),
+      fundedAmount(amount, cadenceSeconds),
       book.payment.decimals,
       [],
       TOKEN_PROGRAM_ID,
@@ -778,15 +814,17 @@ export async function buildResumePlanTransaction(params: {
   owner: PublicKey;
   planAddress: PublicKey;
   amount: bigint;
+  /** The plan's pace, since the approval is sized against it. */
+  cadenceSeconds: number;
 }): Promise<Transaction> {
-  const { owner, planAddress, amount } = params;
+  const { owner, planAddress, amount, cadenceSeconds } = params;
   const transaction = new Transaction().add(
     createApproveCheckedInstruction(
       ownerPaymentAccount(owner),
       PAYMENT_MINT,
       planAddress,
       owner,
-      amount * BigInt(RUNS_FUNDED),
+      fundedAmount(amount, cadenceSeconds),
       book.payment.decimals,
       [],
       TOKEN_PROGRAM_ID,

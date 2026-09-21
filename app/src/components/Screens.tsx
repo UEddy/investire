@@ -10,6 +10,7 @@ import {
   ASSETS,
   CADENCES,
   VaultEntry,
+  DAY_SECONDS,
   WEEK_SECONDS,
   assetBySymbol,
 } from "@/lib/config";
@@ -18,7 +19,8 @@ import {
   PROGRAM_ID,
   PayoutSource,
   Plan,
-  RUNS_FUNDED,
+  runsFunded,
+  fundedAmount,
   loadPayoutSources,
   loadVaultEquity,
   payoutPerWrapper,
@@ -37,6 +39,8 @@ import {
 import { Portfolio, buildPortfolio, computeStreak } from "@/lib/portfolio";
 import {
   allowanceReach,
+  buysPhrase,
+  coverage,
   cadencePhrase,
   changePhrase,
   exactAmount,
@@ -272,6 +276,7 @@ function Home({ savings }: { savings: Savings }) {
           plans={savings.plans}
           funding={savings.funding}
           shares={shares[activePlan.asset] ?? 0n}
+          cash={holdings?.cash ?? 0n}
           expanded={detail}
           unfunded={activePlanUnfunded}
           onToggle={() => setDetail((isOpen) => !isOpen)}
@@ -509,6 +514,7 @@ function PlanCard({
   plans,
   funding,
   shares,
+  cash,
   expanded,
   unfunded,
   onToggle,
@@ -521,6 +527,8 @@ function PlanCard({
   plans: Plan[];
   funding: Funding;
   shares: bigint;
+  /** The saver's dollar balance, for the "add dollars" warning. */
+  cash: bigint;
   expanded: boolean;
   unfunded: boolean;
   onToggle: () => void;
@@ -585,14 +593,25 @@ function PlanCard({
           >
             {busy
               ? "Starting again"
-              : `Allow ${RUNS_FUNDED} more buys, ${formatMoney(
-                  plan.amount * BigInt(RUNS_FUNDED),
+              : `Allow ${runsFunded(plan.cadenceSeconds)} more buys, ${formatMoney(
+                  fundedAmount(plan.amount, plan.cadenceSeconds),
                   MONEY_DECIMALS,
                 )}`}
           </button>
         </motion.div>
       ) : (
-        <Allowance plan={plan} allowance={allowance} />
+        <>
+          {/* Before the allowance box, because a saver who is about to run out
+              needs to know that before they read what they have left. */}
+          <RunningOut
+            cash={cash}
+            allowance={allowance}
+            plan={plan}
+            onRenew={onResume}
+            busy={busy}
+          />
+          <Allowance plan={plan} allowance={allowance} />
+        </>
       )}
 
       {/* Stop sits on the card itself, never behind the detail view: anything
@@ -715,6 +734,129 @@ function Allowance({ plan, allowance }: { plan: Plan; allowance: bigint }) {
         {lastTs ? `, the last on ${shortDate(lastTs)}` : ""}. Nothing more
         leaves your account without you allowing it.
       </p>
+    </motion.div>
+  );
+}
+
+/**
+ * How long an approval lasts, in the words a saver would use. The buy count is
+ * already on screen beside this; the point of the phrase is that "36 buys"
+ * means nothing on its own until you know whether that is a month or a decade.
+ */
+function approvalSpan(cadenceSeconds: number): string {
+  const days = (runsFunded(cadenceSeconds) * cadenceSeconds) / DAY_SECONDS;
+  if (days >= 330) {
+    const years = Math.round(days / 365);
+    return years <= 1 ? "a year" : `${years} years`;
+  }
+  const months = Math.round(days / 30);
+  return months <= 1 ? "a month" : `${months} months`;
+}
+
+/**
+ * The two things that can run out, said separately.
+ *
+ * They are separate because the fix is separate. Dollars running out is solved
+ * by adding dollars; the approval running out is solved by approving more, and
+ * telling someone to "add dollars" when their wallet is full and their
+ * approval is spent sends them somewhere that will not help. So each gets its
+ * own line, its own count, and its own action.
+ *
+ * Nothing is shown while both are comfortable. A warning that is always
+ * present is not a warning.
+ */
+function RunningOut({
+  cash,
+  allowance,
+  plan,
+  onRenew,
+  busy,
+}: {
+  cash: bigint;
+  allowance: bigint;
+  plan: Plan;
+  onRenew: () => void;
+  busy: boolean;
+}) {
+  const wallet = coverage(cash, plan.amount);
+  const approval = coverage(allowance, plan.amount);
+
+  if (wallet.level === "ok" && approval.level === "ok") {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 grid gap-2">
+      {wallet.level !== "ok" ? (
+        <Warning
+          urgent={wallet.level === "empty"}
+          text={
+            wallet.level === "empty"
+              ? "Your balance will not cover the next buy, so it will be skipped. Add dollars to keep saving."
+              : `Your balance covers ${buysPhrase(wallet.buys)}. Add dollars to keep saving.`
+          }
+        />
+      ) : null}
+
+      {/* Only ever the gentle one. This card shows its paused state instead
+          the moment the approval will not cover another buy, which is the
+          same condition as coverage reaching zero, so there is no exhausted
+          case left for this warning to report. The wallet above does need
+          both, since dollars can run out while the approval is untouched. */}
+      {approval.level === "low" ? (
+        <Warning
+          urgent={false}
+          text={`Your approval covers ${buysPhrase(approval.buys)}.`}
+          action={{ label: busy ? "Renewing" : "Tap to renew", onPress: onRenew, busy }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Gentle by default, clear when the next buy is actually going to be missed.
+ * The urgent one is not red: nothing here is an error, and a plan that skips a
+ * buy has not broken, it is waiting. It is heavier than the gentle one and
+ * says plainly what will happen.
+ */
+function Warning({
+  text,
+  urgent,
+  action,
+}: {
+  text: string;
+  urgent: boolean;
+  action?: { label: string; onPress: () => void; busy: boolean };
+}) {
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={SPRING_SOFT}
+      className={[
+        "rounded-2xl px-4 py-3",
+        urgent ? "bg-accentSoft" : "border border-line bg-paper",
+      ].join(" ")}
+    >
+      <p
+        className={[
+          "text-[15px] leading-relaxed",
+          urgent ? "font-medium text-ink" : "text-muted",
+        ].join(" ")}
+      >
+        {text}
+      </p>
+      {action ? (
+        <button
+          onClick={action.onPress}
+          disabled={action.busy}
+          className="mt-2 text-[15px] font-semibold text-accent disabled:opacity-50"
+        >
+          {action.label}
+        </button>
+      ) : null}
     </motion.div>
   );
 }
@@ -1031,12 +1173,16 @@ function PlanForm({
               you a slice of {asset.displayName}.
             </p>
             <p className="mt-3 rounded-2xl bg-accentSoft px-4 py-3 text-[15px] leading-relaxed text-ink">
-              You are allowing up to{" "}
+              You are allowing this plan to take up to{" "}
               <span className="tabular font-semibold">
-                {formatMoney(amount * BigInt(RUNS_FUNDED), MONEY_DECIMALS)}
-              </span>
-              , enough for {RUNS_FUNDED} buys. After that the plan pauses until
-              you allow more. You can stop it any time.
+                {formatMoney(fundedAmount(amount, cadenceSeconds), MONEY_DECIMALS)}
+              </span>{" "}
+              in total, which is{" "}
+              {runsFunded(cadenceSeconds)} buys of{" "}
+              {formatMoneyShort(amount, MONEY_DECIMALS)}, about{" "}
+              {approvalSpan(cadenceSeconds)} at this pace. Nothing more can
+              leave your account without you allowing it, and you can stop the
+              plan at any time.
               {plan ? " This replaces what your current plan was allowed." : ""}
             </p>
           </>
