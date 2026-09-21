@@ -73,4 +73,4 @@ solana program deploy \
 
 echo "==> Running tests"
 ANCHOR_PROVIDER_URL="${RPC_URL}" ANCHOR_WALLET="${WALLET}" \
-  yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/paritas.ts
+  npx ts-mocha -p ./tsconfig.json -t 1000000 tests/paritas.ts

@@ -11,3 +11,9 @@ test-ledger
 .devnet-keys
 # Compiled keeper, built locally and rsynced to the droplet.
 dist
+# One package manager for this repo, and it is npm: the keeper workflow runs
+# npm ci, and app/ was already npm only. A second lockfile is how the two drift
+# apart. Dependencies were once added with yarn, which updated yarn.lock and
+# left package-lock.json untouched, and npm ci then failed in CI on a lockfile
+# that had never heard of @solana/spl-token. Ignored so it cannot come back.
+yarn.lock

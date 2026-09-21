@@ -179,8 +179,8 @@ no TypeScript compile on the droplet.
 **1. Build locally**
 
 ```bash
-yarn install
-yarn keeper:build          # tsc -> dist/
+npm ci
+npm run keeper:build       # tsc -> dist/
 ```
 
 **2. Create the user and directories**
@@ -196,7 +196,7 @@ mkdir -p /opt/investire /etc/investire
 ```bash
 # from the repo root, locally
 rsync -a --delete dist/ root@droplet:/opt/investire/dist/
-rsync -a package.json yarn.lock root@droplet:/opt/investire/
+rsync -a package.json package-lock.json root@droplet:/opt/investire/
 rsync -a devnet.json root@droplet:/opt/investire/
 rsync -a target/idl/paritas.json root@droplet:/opt/investire/idl/paritas.json
 ```
@@ -209,7 +209,7 @@ rsync -a target/idl/paritas.json root@droplet:/opt/investire/idl/paritas.json
 ```bash
 ssh root@droplet
 cd /opt/investire
-yarn install --production --frozen-lockfile
+npm ci --omit=dev
 chown -R investire:investire /opt/investire
 ```
 
