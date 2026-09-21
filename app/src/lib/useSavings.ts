@@ -27,7 +27,7 @@ import {
   loadPlans,
 } from "./paritas";
 import { PublicKey, Transaction } from "@solana/web3.js";
-import { ASSETS, PARITAS_IDL, VaultEntry } from "./config";
+import { ADDRESS_BOOK, ASSETS, PARITAS_IDL, VaultEntry } from "./config";
 import type { Quote } from "./portfolio";
 
 /**
@@ -483,20 +483,91 @@ function friendly(err: unknown): string {
     return "Something else has permission to spend from your account, so we have left your plan as it was.";
   }
   const message = errorText(err);
+
+  // Before anything else, because a wallet on the wrong network produces
+  // errors that read like ordinary failures: the program, the vaults and the
+  // test dollars exist only on devnet, so a wallet pointed at mainnet sends a
+  // transaction that cannot reference any of them. Telling that person to
+  // "try again in a moment" sends them round the same loop forever.
+  if (wrongNetwork(message)) {
+    return WRONG_NETWORK;
+  }
+  if (/User rejected|rejected the request|User denied/i.test(message)) {
+    return "You cancelled that.";
+  }
   const program = programError(message);
   if (program) {
     return program;
   }
-  if (/User rejected|rejected the request/i.test(message)) {
-    return "You cancelled that.";
-  }
-  if (/insufficient|0x1\b/i.test(message)) {
+  if (/insufficient lamports|insufficient funds for rent|0x1\b/i.test(message)) {
     return "Not enough in your account to start this plan.";
   }
-  if (/blockhash|timed out|fetch/i.test(message)) {
+  if (/timed out waiting for confirmation/i.test(message)) {
+    return (
+      "The network did not confirm that in time. It may still land: check " +
+      "your wallet before trying again."
+    );
+  }
+  if (/blockhash|timed out|failed to fetch|network error/i.test(message)) {
     return "The network was slow to answer. Try that again.";
   }
-  return "That did not go through. Try again in a moment.";
+  return unexplained(message);
+}
+
+/**
+ * The app talks to one cluster, and the address book names it. A wallet set to
+ * another one cannot see the program or the test dollars, and the wallet has
+ * no way to be asked which network it is on: the Wallet Standard exposes no
+ * such query, so this is inferred from what the failure looked like.
+ *
+ * Each of these means "the thing the transaction referred to is not here".
+ * On an app whose every address is devnet only, that is the wrong network
+ * far more often than it is anything else.
+ */
+function wrongNetwork(message: string): boolean {
+  // If our own program logged an invocation, it exists on whatever cluster the
+  // transaction reached, so the network is right and the failure is something
+  // else. This guard matters because the account checks below are broad on
+  // purpose, and a real program refusal must not be reported as a wallet
+  // pointed at the wrong chain.
+  if (new RegExp(`Program ${ADDRESS_BOOK.programId} invoke`).test(message)) {
+    return false;
+  }
+  return (
+    /Attempt to load a program that does not exist/i.test(message) ||
+    /ProgramAccountNotFound/i.test(message) ||
+    /Blockhash not found|BlockhashNotFound/i.test(message) ||
+    new RegExp(`${ADDRESS_BOOK.programId}[^\\n]*(not exist|unknown|invalid)`, "i").test(
+      message,
+    ) ||
+    /AccountNotFound|could not find account/i.test(message)
+  );
+}
+
+const WRONG_NETWORK =
+  `Your wallet looks like it is on the wrong network. This app runs on ` +
+  `Solana ${ADDRESS_BOOK.cluster}. Open your wallet's settings, switch the ` +
+  `network to ${ADDRESS_BOOK.cluster}, then try again.`;
+
+/**
+ * The last resort, and deliberately not a shrug. A failure nothing above
+ * recognised still has a real reason in it, and hiding that behind "try again
+ * in a moment" is what leaves a tester with nothing to report and no way
+ * forward. So the plainest line of the underlying error is shown alongside
+ * the apology: program logs and stack frames are dropped, the sentence a
+ * person or a developer can act on is kept.
+ */
+function unexplained(message: string): string {
+  const skip =
+    /^(Program |> Program|    at |Logs?:|\[|\{|transaction failed:|custom program error)/i;
+  const line = message
+    .split("\n")
+    .map((part) => part.trim())
+    .find((part) => part.length > 0 && part.length < 200 && !skip.test(part));
+
+  return line
+    ? `That did not go through. The wallet reported: ${line}`
+    : "That did not go through, and no reason came back. Try again in a moment.";
 }
 
 /**
@@ -521,17 +592,45 @@ const PROGRAM_ERROR_COPY: Record<string, string> = {
   Unauthorized: "That plan belongs to a different account.",
 };
 
-const ERROR_NAMES = new Map(
-  (PARITAS_IDL as { errors?: { code: number; name: string }[] }).errors?.map(
-    (entry) => [entry.code, entry.name],
-  ) ?? [],
+type IdlError = { code: number; name: string; msg?: string };
+
+const IDL_ERRORS = (PARITAS_IDL as { errors?: IdlError[] }).errors ?? [];
+
+const ERROR_NAMES = new Map(IDL_ERRORS.map((entry) => [entry.code, entry.name]));
+
+/**
+ * The program's own message for every refusal that has no hand written line
+ * above. PROGRAM_ERROR_COPY covers the ones a saver can actually hit and act
+ * on; the rest are conditions the screen already prevents, so they should be
+ * unreachable. "Should be" is the reason this exists: if one does reach a
+ * saver, the program's description of it is a far better thing to show than a
+ * shrug, and it is what makes a bug report possible.
+ */
+const ERROR_MESSAGES = new Map(
+  IDL_ERRORS.filter((entry) => entry.msg).map((entry) => [entry.name, entry.msg as string]),
 );
 
 function programError(message: string): string | null {
   const hex = /custom program error: 0x([0-9a-f]+)/i.exec(message);
   const named = /Error Code: (\w+)/.exec(message);
-  const name = named?.[1] ?? (hex ? ERROR_NAMES.get(parseInt(hex[1], 16)) : undefined);
-  return name ? PROGRAM_ERROR_COPY[name] ?? null : null;
+  // The decimal form, from a signature status err that reached here without
+  // logs: {"InstructionError":[0,{"Custom":6011}]}. Without this branch a
+  // transaction that landed and then failed has a known reason that nothing
+  // reads, and the saver is told only that it did not go through.
+  const custom = /"?Custom"?\s*:\s*(\d+)/.exec(message);
+  const name =
+    named?.[1] ??
+    (hex ? ERROR_NAMES.get(parseInt(hex[1], 16)) : undefined) ??
+    (custom ? ERROR_NAMES.get(parseInt(custom[1], 10)) : undefined);
+  if (!name) {
+    return null;
+  }
+  const copy = PROGRAM_ERROR_COPY[name];
+  if (copy) {
+    return copy;
+  }
+  const msg = ERROR_MESSAGES.get(name);
+  return msg ? `That did not go through: ${msg}.` : null;
 }
 
 /**

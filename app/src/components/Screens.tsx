@@ -131,14 +131,56 @@ function Welcome() {
         </ul>
         <p className="mt-3 text-[14px] text-muted">More are on the way.</p>
       </div>
+
+      <NetworkNote />
+
       <motion.button
         whileTap={{ scale: 0.98 }}
         onClick={() => setVisible(true)}
-        className="mt-8 w-full rounded-2xl bg-ink py-4 text-[17px] font-semibold text-paper active:opacity-90"
+        className="mt-4 w-full rounded-2xl bg-ink py-4 text-[17px] font-semibold text-paper active:opacity-90"
       >
         Get started
       </motion.button>
     </Shell>
+  );
+}
+
+/**
+ * Said before the wallet is connected, because afterwards it is too late: a
+ * wallet on the wrong network connects perfectly happily, shows an empty
+ * balance, and fails only at the moment the saver tries to buy something. The
+ * app cannot ask a wallet which network it is on, since the Wallet Standard
+ * exposes no way to, so it cannot warn on its own and has to say this up
+ * front instead. friendly() names the same mistake afterwards, from the shape
+ * of the failure, for anyone who gets past this.
+ */
+function NetworkNote() {
+  const cluster = ADDRESS_BOOK.cluster;
+  return (
+    <section className="mt-8 rounded-2xl border border-line bg-white/60 px-4 py-3">
+      <p className="text-[15px] font-medium">
+        First, set your wallet to {cluster}
+      </p>
+      <p className="mt-2 text-[14px] leading-relaxed text-muted">
+        This runs on Solana&rsquo;s test network, so nothing here is real money
+        and nothing here is a real share. A wallet left on mainnet will connect
+        and look empty, then fail when it tries to buy.
+      </p>
+      <ul className="mt-3 space-y-1 text-[14px] leading-relaxed text-muted">
+        <li>
+          <span className="font-medium text-ink">Phantom:</span> Settings,
+          Developer Settings, turn on Testnet Mode, then pick Solana {cluster}.
+        </li>
+        <li>
+          <span className="font-medium text-ink">Solflare:</span> Settings,
+          General, Network, then pick {cluster}.
+        </li>
+      </ul>
+      <p className="mt-3 text-[14px] leading-relaxed text-muted">
+        Already connected on the wrong one? Switch the network in your wallet,
+        then reload this page.
+      </p>
+    </section>
   );
 }
 
@@ -325,6 +367,8 @@ function Hero({
         ))
       )}
 
+      <p className="mt-3 text-[13px] leading-relaxed text-muted">{CUSTODY_LINE}</p>
+
       {streak ? (
         <motion.p
           initial={{ opacity: 0, y: 4 }}
@@ -338,6 +382,16 @@ function Hero({
     </section>
   );
 }
+
+/**
+ * Wherever a share balance is shown. A saver who buys and then looks in their
+ * wallet for the shares does not find them there, and reasonably concludes
+ * the buy failed. It did not: the tokenised stock sits in the vault, and what
+ * the saver holds is the claim on it. Saying so at the balance itself is the
+ * only place the question actually gets asked.
+ */
+const CUSTODY_LINE =
+  "Held for you in the savings vault. You can take them out to your wallet at any time.";
 
 /**
  * Money, secondary to shares and honest about both directions.
@@ -623,6 +677,9 @@ function PlanCard({
               label={`Shares of ${asset.displayName}`}
               value={formatShares(shares, asset.receiptDecimals)}
             />
+            <p className="mt-3 text-[13px] leading-relaxed text-muted">
+              {CUSTODY_LINE}
+            </p>
           </motion.div>
         ) : null}
       </AnimatePresence>

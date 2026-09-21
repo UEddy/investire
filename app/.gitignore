@@ -8,3 +8,5 @@ src/config/devnet.json
 src/config/paritas-idl.json
 .vercel
 .env*
+# Incremental typecheck artifact from tsc.
+tsconfig.tsbuildinfo

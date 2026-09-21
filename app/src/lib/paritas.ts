@@ -375,6 +375,73 @@ export async function loadHoldings(
  * Resolves on confirmation, throws if the chain reports the transaction
  * failed, and gives up after the timeout rather than hanging the button.
  */
+/**
+ * A transaction that landed and then failed carries its reason in the logs of
+ * the confirmed transaction, not in the signature status, which holds only a
+ * shape like {"InstructionError":[0,{"Custom":6011}]}. Thrown on its own that
+ * blob reaches the saver as a generic "that did not go through", because
+ * nothing downstream can read a program error out of it.
+ *
+ * So the logs are fetched and attached before throwing. errorText walks the
+ * `logs` property of an Error, and the program's own log line carries both
+ * "Error Code: <Name>" and "custom program error: 0x...", which is what lets
+ * the screen name the actual refusal. The custom code is also written into the
+ * message as a hex string, so a failure whose logs cannot be fetched (dropped
+ * by the RPC, or pruned) is still identifiable rather than silent.
+ */
+async function failedTransactionError(
+  connection: Connection,
+  signature: string,
+  err: unknown,
+): Promise<Error> {
+  const parts = [`transaction failed: ${JSON.stringify(err)}`];
+
+  const custom = customErrorCode(err);
+  if (custom !== null) {
+    parts.push(`custom program error: 0x${custom.toString(16)}`);
+  }
+
+  let logs: string[] = [];
+  try {
+    const tx = await connection.getTransaction(signature, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+    });
+    logs = tx?.meta?.logMessages ?? [];
+  } catch {
+    // The reason is best effort. The InstructionError shape above is already
+    // in the message, so a failed log fetch degrades the wording rather than
+    // losing the failure.
+  }
+
+  const error = new Error(parts.join("\n")) as Error & { logs?: string[] };
+  if (logs.length > 0) {
+    error.logs = logs;
+  }
+  return error;
+}
+
+/**
+ * Digs the Anchor error code out of a signature status err. The shape is
+ * {"InstructionError":[index,{"Custom":6011}]}; anything else, a missing
+ * account or a failed preflight, has no code to find.
+ */
+function customErrorCode(err: unknown): number | null {
+  if (!err || typeof err !== "object") {
+    return null;
+  }
+  const instruction = (err as { InstructionError?: unknown }).InstructionError;
+  if (!Array.isArray(instruction) || instruction.length < 2) {
+    return null;
+  }
+  const detail = instruction[1];
+  if (detail && typeof detail === "object" && "Custom" in detail) {
+    const code = (detail as { Custom: unknown }).Custom;
+    return typeof code === "number" ? code : null;
+  }
+  return null;
+}
+
 export async function confirmSignature(
   connection: Connection,
   signature: string,
@@ -388,7 +455,7 @@ export async function confirmSignature(
 
     if (status) {
       if (status.err) {
-        throw new Error(`transaction failed: ${JSON.stringify(status.err)}`);
+        throw await failedTransactionError(connection, signature, status.err);
       }
       if (
         status.confirmationStatus === "confirmed" ||
