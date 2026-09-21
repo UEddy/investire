@@ -50,6 +50,15 @@ pub mod paritas {
         instructions::init_vault(ctx, symbol, authority, keeper_fee_bps, keeper_fee_min)
     }
 
+    pub fn init_receipt_metadata(
+        ctx: Context<InitReceiptMetadata>,
+        name: String,
+        symbol: String,
+        uri: String,
+    ) -> Result<()> {
+        instructions::init_receipt_metadata(ctx, name, symbol, uri)
+    }
+
     pub fn set_keeper_fee(
         ctx: Context<SetKeeperFee>,
         keeper_fee_bps: u16,

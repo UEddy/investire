@@ -94,4 +94,12 @@ pub enum ParitasError {
     SettleCashOutNotTopLevel,
     #[msg("the cash out delivered less than the minimum the user signed for")]
     CashOutBelowMinimum,
+    #[msg("metadata program account is not the pinned Metaplex Token Metadata program")]
+    MetadataProgramMismatch,
+    #[msg("metadata name exceeds the maximum length")]
+    MetadataNameTooLong,
+    #[msg("metadata symbol exceeds the maximum length")]
+    MetadataSymbolTooLong,
+    #[msg("metadata uri exceeds the maximum length")]
+    MetadataUriTooLong,
 }
