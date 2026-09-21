@@ -48,7 +48,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Matches the local environment everything was built and tested on.
+          # Node 20 went end of life in April 2026, so it stops getting
+          # security patches; 24 is the current LTS. Pinned to the major so
+          # patch releases still arrive.
+          node-version: "24"
           cache: npm
 
       - name: Install dependencies
