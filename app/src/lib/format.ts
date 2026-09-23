@@ -205,7 +205,7 @@ export function moneyInput(raw: bigint, decimals: number): string {
 }
 
 /**
- * How many whole buys an allowance pays for, and the date of the last one.
+ * How many whole buys an approved total pays for, and the date of the last one.
  * The last date counts from the next buy, or from now if that is overdue, since
  * an overdue buy runs as soon as a keeper reaches it.
  */
@@ -267,8 +267,8 @@ export function relativePercent(a: bigint, b: bigint): string {
  * How many more buys a pot of money pays for, and how worried to be about it.
  *
  * Two different things can run out under a plan and they are not
- * interchangeable: the dollars sitting in the saver's wallet, and the approval
- * that lets the plan spend them. Either one reaching zero stops the buying,
+ * interchangeable: the dollars in the saver's dollar account, and the spending
+ * limit that lets the plan spend them. Either one reaching zero stops buying,
  * and the fix is different in each case, so they are counted the same way here
  * and reported separately wherever they are shown.
  *

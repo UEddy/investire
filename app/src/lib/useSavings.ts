@@ -47,7 +47,7 @@ const PRICE_REFRESH_MS = 60_000;
  * without promising an opening time the app does not know for holidays.
  */
 export const CASH_OUT_CLOSED =
-  "Cash out works while US markets are open. You can take the shares any time.";
+  "Cash withdrawals work while US markets are open. You can withdraw as shares at any time.";
 
 /** What cashing out a number of shares would pay, or why it cannot. */
 export type CashOutQuote =
@@ -68,7 +68,7 @@ class MarketClosedError extends Error {
 /** The price moved between the quote on screen and the transaction built. */
 class CashOutMovedError extends Error {
   constructor() {
-    super("the cash out quote changed before signing");
+    super("the cash withdrawal quote changed before signing");
     this.name = "CashOutMovedError";
   }
 }
@@ -137,7 +137,7 @@ export interface SavingsState {
    * outside this app, and because every buy spends the allowance down.
    */
   activePlanUnfunded: boolean;
-  /** The permission on the saver's dollar account, read live. */
+  /** What the saver approved on their dollar account, read live. */
   funding: Funding;
   prices: Prices;
   /** Every successful buy across the saver's plans, newest first. */
@@ -411,7 +411,9 @@ export function useSavings(): SavingsState {
             if (body.error === "market-closed") {
               throw new MarketClosedError();
             }
-            throw new Error(`cash out ${body.error ?? body.status}`);
+            throw new Error(
+              `the cash withdrawal service answered ${body.error ?? body.status}`,
+            );
           }
           if (BigInt(body.paymentOut as string) < expected) {
             throw new CashOutMovedError();
@@ -470,7 +472,7 @@ function friendly(err: unknown): string {
   }
   if (err instanceof PayoutShortError) {
     if (err.available === 0n) {
-      return "That is too small to take out. Try a larger amount.";
+      return "That's too small to withdraw. Try a larger amount.";
     }
     // Rounded down, so the figure offered is one that will actually work.
     const scale = 10 ** (ASSETS[0].receiptDecimals - 4);
@@ -478,10 +480,10 @@ function friendly(err: unknown): string {
       undefined,
       { maximumFractionDigits: 4 },
     );
-    return `Right now you can take out up to ${most} shares at once. Try that, or a smaller amount.`;
+    return `Right now you can withdraw up to ${most} shares at once. Try that, or a smaller amount.`;
   }
   if (err instanceof ForeignDelegateError) {
-    return "Something else has permission to spend from your account, so we have left your plan as it was.";
+    return "Something else has permission to spend from your dollar account, so we left your plan as it was.";
   }
   const message = errorText(err);
 
@@ -500,13 +502,15 @@ function friendly(err: unknown): string {
   if (program) {
     return program;
   }
+  // Lamports, not dollars. Telling someone to add dollars when what they are
+  // short of is the network fee sends them to the wrong faucet.
   if (/insufficient lamports|insufficient funds for rent|0x1\b/i.test(message)) {
-    return "Not enough in your account to start this plan.";
+    return "Not enough SOL in your wallet to cover the network fee.";
   }
   if (/timed out waiting for confirmation/i.test(message)) {
     return (
-      "The network did not confirm that in time. It may still land: check " +
-      "your wallet before trying again."
+      "The network didn't confirm that in time. It may still go through, so " +
+      "check your wallet before trying again."
     );
   }
   if (/blockhash|timed out|failed to fetch|network error/i.test(message)) {
@@ -546,9 +550,9 @@ function wrongNetwork(message: string): boolean {
 }
 
 const WRONG_NETWORK =
-  `Your wallet looks like it is on the wrong network. This app runs on ` +
-  `Solana ${ADDRESS_BOOK.cluster}. Open your wallet's settings, switch the ` +
-  `network to ${ADDRESS_BOOK.cluster}, then try again.`;
+  `Your wallet looks like it's on the wrong network. This app runs on Solana ` +
+  `${ADDRESS_BOOK.cluster}. Switch the network to ${ADDRESS_BOOK.cluster} in ` +
+  `your wallet's settings, then try again.`;
 
 /**
  * The last resort, and deliberately not a shrug. A failure nothing above
@@ -567,8 +571,8 @@ function unexplained(message: string): string {
     .find((part) => part.length > 0 && part.length < 200 && !skip.test(part));
 
   return line
-    ? `That did not go through. The wallet reported: ${line}`
-    : "That did not go through, and no reason came back. Try again in a moment.";
+    ? `That didn't go through. The reason given: ${line}`
+    : "That didn't go through, and no reason came back. Try again in a moment.";
 }
 
 /**
@@ -587,7 +591,7 @@ const PROGRAM_ERROR_COPY: Record<string, string> = {
   ScheduleInactive: "That plan has already stopped.",
   InsufficientVaultBalance:
     "That can't be paid out in full right now. Try a smaller amount.",
-  ZeroAmount: "That is too small to take out. Try a larger amount.",
+  ZeroAmount: "That's too small to withdraw. Try a larger amount.",
   CashOutBelowMinimum:
     "The sale came in under the amount you agreed to, so nothing happened. Try again.",
   Unauthorized: "That plan belongs to a different account.",
@@ -631,7 +635,7 @@ function programError(message: string): string | null {
     return copy;
   }
   const msg = ERROR_MESSAGES.get(name);
-  return msg ? `That did not go through: ${msg}.` : null;
+  return msg ? `That didn't go through: ${msg}.` : null;
 }
 
 /**

@@ -87,7 +87,7 @@ const VAULT_SPECS: {
   {
     symbol: "SPY",
     displayName: "S&P 500",
-    description: "500 of the largest US companies in one",
+    description: "500 US companies in one",
     priceFeed: "Equity.US.SPY/USD",
     mints: (context) => [context.spyx],
   },

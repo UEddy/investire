@@ -53,7 +53,7 @@ export const PAYMENT_MINT = new PublicKey(book.payment.mint);
 const FUNDED_HORIZON_SECONDS = 3 * 30 * 24 * 60 * 60;
 
 /**
- * The fewest buys any approval covers, whatever the pace.
+ * The fewest buys any approved total covers, whatever the pace.
  *
  * At a monthly pace three months is three buys, which is a thin allowance to
  * hand an automatic plan: one missed renewal and it stops. This floor keeps
@@ -270,7 +270,7 @@ export function planProblem(params: {
     return "That amount is too large.";
   }
   if (amount > cash) {
-    return `You have ${dollars(cash, moneyDecimals)} in your account, not enough for the first buy.`;
+    return `You have ${dollars(cash, moneyDecimals)} in your dollar account, not enough for the first buy.`;
   }
   return null;
 }
@@ -283,19 +283,19 @@ function dollars(raw: bigint, decimals: number): string {
 }
 
 export interface Funding {
-  /** Whoever may spend from the saver's dollars, or null for nobody. */
+  /** Whoever has permission to spend the saver's dollars, or null for nobody. */
   delegate: string | null;
   /** How much more they may take, in raw payment units. */
   delegatedAmount: bigint;
 }
 
 /**
- * The permission on the saver's dollar account, as it stands on chain.
+ * What the saver approved on their dollar account, as it stands on chain.
  *
  * This is the real limit on what the app can take, not the plan. The plan says
  * how much and how often; the delegation says how much in total, and the
  * program cannot move a cent past it. It shrinks with every buy, so it is read
- * fresh rather than derived from what was approved at creation.
+ * fresh rather than derived from what was permitted at creation.
  */
 export async function loadFunding(
   connection: Connection,

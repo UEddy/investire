@@ -119,7 +119,7 @@ function Welcome() {
         </h1>
         <p className="mt-5 text-[17px] leading-relaxed text-muted">
           Set it once. A few dollars a day, a week or a month buys you a slice
-          of a share, and the slices add up.
+          of a share. The slices add up.
         </p>
 
         <ul className="mt-8 space-y-2">
@@ -166,9 +166,9 @@ function NetworkNote() {
         First, set your wallet to {cluster}
       </p>
       <p className="mt-2 text-[14px] leading-relaxed text-muted">
-        This runs on Solana&rsquo;s test network, so nothing here is real money
-        and nothing here is a real share. A wallet left on mainnet will connect
-        and look empty, then fail when it tries to buy.
+        This runs on Solana&rsquo;s test network. Nothing here is real money and
+        nothing here is a real share. A wallet left on mainnet connects fine,
+        shows an empty balance, then fails at the first buy.
       </p>
       <ul className="mt-3 space-y-1 text-[14px] leading-relaxed text-muted">
         <li>
@@ -345,7 +345,7 @@ function Hero({
             onClick={onWithdraw}
             className="-mr-1 px-1 py-1 text-[15px] font-medium text-accent"
           >
-            Take out
+            Withdraw
           </button>
         ) : null}
       </div>
@@ -372,7 +372,7 @@ function Hero({
         ))
       )}
 
-      <p className="mt-3 text-[13px] leading-relaxed text-muted">{CUSTODY_LINE}</p>
+      <p className="mt-3 text-[15px] leading-relaxed text-ink">{CUSTODY_LINE}</p>
 
       {streak ? (
         <motion.p
@@ -396,7 +396,7 @@ function Hero({
  * only place the question actually gets asked.
  */
 const CUSTODY_LINE =
-  "Held for you in the savings vault. You can take them out to your wallet at any time.";
+  "Your shares are held for you in the savings vault. You can withdraw them to your wallet at any time.";
 
 /**
  * Money, secondary to shares and honest about both directions.
@@ -496,8 +496,8 @@ function ValueCard({ portfolio, prices }: { portfolio: Portfolio; prices: Prices
                 )} shares of ${assetBySymbol(position.symbol).displayName}`,
             )
             .join(" and ")}{" "}
-          added outside your plans, so what they cost is not known and they are
-          left out of the change.
+          that arrived outside your plans. We don&rsquo;t know what they cost, so
+          they&rsquo;re left out of the change.
         </p>
       ) : null}
 
@@ -573,7 +573,7 @@ function PlanCard({
           You save {sentence} into {asset.displayName}.
         </p>
         <p className="mt-2 text-[15px] text-muted">
-          {unfunded ? "Paused" : `Next one ${whenNext(plan.nextDueTs)}`}
+          {unfunded ? "Paused" : `Next buy ${whenNext(plan.nextDueTs)}`}
           <span aria-hidden> &middot; </span>
           {expanded ? "Less" : "Details"}
         </p>
@@ -581,10 +581,10 @@ function PlanCard({
 
       {unfunded ? (
         <motion.div layout className="mt-4 rounded-2xl bg-accentSoft p-4">
-          <p className="text-[15px] leading-relaxed text-ink">
+          <p className="text-[15px] font-medium leading-relaxed text-ink">
             {usedUp
-              ? "This plan has used up the amount you allowed it, so it has stopped buying."
-              : "This plan cannot buy right now, because permission to spend from your account was removed."}
+              ? "This plan has spent everything you approved, so it's paused."
+              : "This plan is paused. Its permission to spend from your dollar account was removed."}
           </p>
           <button
             onClick={onResume}
@@ -592,8 +592,8 @@ function PlanCard({
             className="mt-3 w-full rounded-xl bg-accent py-3 text-[15px] font-semibold text-white active:opacity-90 disabled:opacity-50"
           >
             {busy
-              ? "Starting again"
-              : `Allow ${runsFunded(plan.cadenceSeconds)} more buys, ${formatMoney(
+              ? "Renewing"
+              : `Renew for ${runsFunded(plan.cadenceSeconds)} more buys, ${formatMoney(
                   fundedAmount(plan.amount, plan.cadenceSeconds),
                   MONEY_DECIMALS,
                 )}`}
@@ -630,10 +630,12 @@ function PlanCard({
             className="mt-4 rounded-2xl border border-line p-4"
           >
             <p className="text-[15px] leading-relaxed text-ink">
-              Stop saving {sentence}? You keep your{" "}
-              {formatShares(shares, asset.receiptDecimals)} shares, the
-              permission to spend is removed straight away, and you can start
-              again whenever you like.
+              Stop saving {sentence}?{" "}
+              <span className="font-medium">
+                You keep your {formatShares(shares, asset.receiptDecimals)}{" "}
+                shares, the permission to spend is removed straight away, and
+                you can start again at any time.
+              </span>
             </p>
             <div className="mt-3 grid grid-cols-2 gap-3">
               <button
@@ -690,13 +692,13 @@ function PlanCard({
             transition={SPRING_SOFT}
             className="mt-5 border-t border-line pt-5"
           >
-            <Row label="Bought so far" value={`${lifetime.buys} times`} />
+            <Row label="Buys so far" value={String(lifetime.buys)} />
             <Row label="Put in" value={formatMoney(lifetime.invested, MONEY_DECIMALS)} />
             <Row
               label={`Shares of ${asset.displayName}`}
               value={formatShares(shares, asset.receiptDecimals)}
             />
-            <p className="mt-3 text-[13px] leading-relaxed text-muted">
+            <p className="mt-3 text-[14px] leading-relaxed text-ink">
               {CUSTODY_LINE}
             </p>
           </motion.div>
@@ -707,10 +709,10 @@ function PlanCard({
 }
 
 /**
- * What the app can take, stated as money and as buys. The dollar figure is the
- * hard ceiling: it is the approval on the saver's account, read from chain, and
- * nothing can spend past it. The buys and the date are what that ceiling means
- * at this plan's amount and pace.
+ * What the saver approved, stated as money and as buys. The dollar figure is
+ * a total and not a per buy cap: it is the permission on the saver's dollar
+ * account, read from chain, and nothing can spend past it. The buys and the
+ * date are what that ceiling means at this plan's amount and pace.
  */
 function Allowance({ plan, allowance }: { plan: Plan; allowance: bigint }) {
   const { buys, lastTs } = allowanceReach({
@@ -723,23 +725,25 @@ function Allowance({ plan, allowance }: { plan: Plan; allowance: bigint }) {
   return (
     <motion.div layout className="mt-4 rounded-2xl bg-paper p-4">
       <p className="text-[13px] font-medium uppercase tracking-[0.14em] text-muted">
-        Allowed to take
+        Approved to spend
       </p>
       <p className="tabular mt-1 text-[24px] font-semibold">
         {formatMoney(allowance, MONEY_DECIMALS)}
       </p>
       <p className="mt-1 text-[15px] leading-relaxed text-muted">
-        {buys === 1 ? "1 more buy" : `${buys} more buys`} of{" "}
+        Covers {buysPhrase(buys)} of{" "}
         {formatMoneyShort(plan.amount, MONEY_DECIMALS)}
-        {lastTs ? `, the last on ${shortDate(lastTs)}` : ""}. Nothing more
-        leaves your account without you allowing it.
+        {lastTs ? `, the last on ${shortDate(lastTs)}` : ""}.{" "}
+        <span className="font-medium text-ink">
+          Nothing more leaves your dollar account without your permission.
+        </span>
       </p>
     </motion.div>
   );
 }
 
 /**
- * How long an approval lasts, in the words a saver would use. The buy count is
+ * How long an approved total lasts, in the words a saver would use. The count is
  * already on screen beside this; the point of the phrase is that "36 buys"
  * means nothing on its own until you know whether that is a month or a decade.
  */
@@ -757,10 +761,10 @@ function approvalSpan(cadenceSeconds: number): string {
  * The two things that can run out, said separately.
  *
  * They are separate because the fix is separate. Dollars running out is solved
- * by adding dollars; the approval running out is solved by approving more, and
- * telling someone to "add dollars" when their wallet is full and their
- * approval is spent sends them somewhere that will not help. So each gets its
- * own line, its own count, and its own action.
+ * by adding dollars; the approved total running out is solved by renewing it,
+ * and telling someone to "add dollars" when their account is full and what
+ * they approved is spent sends them somewhere that will not help. So each gets
+ * its own line, its own count, and its own action.
  *
  * Nothing is shown while both are comfortable. A warning that is always
  * present is not a warning.
@@ -779,9 +783,9 @@ function RunningOut({
   busy: boolean;
 }) {
   const wallet = coverage(cash, plan.amount);
-  const approval = coverage(allowance, plan.amount);
+  const limit = coverage(allowance, plan.amount);
 
-  if (wallet.level === "ok" && approval.level === "ok") {
+  if (wallet.level === "ok" && limit.level === "ok") {
     return null;
   }
 
@@ -792,21 +796,22 @@ function RunningOut({
           urgent={wallet.level === "empty"}
           text={
             wallet.level === "empty"
-              ? "Your balance will not cover the next buy, so it will be skipped. Add dollars to keep saving."
-              : `Your balance covers ${buysPhrase(wallet.buys)}. Add dollars to keep saving.`
+              ? "Your dollar account won't cover the next buy, so it will be skipped. Add dollars to keep saving."
+              : `Your dollar account covers ${buysPhrase(wallet.buys)}. Add dollars to keep saving.`
           }
         />
       ) : null}
 
       {/* Only ever the gentle one. This card shows its paused state instead
-          the moment the approval will not cover another buy, which is the
-          same condition as coverage reaching zero, so there is no exhausted
-          case left for this warning to report. The wallet above does need
-          both, since dollars can run out while the approval is untouched. */}
-      {approval.level === "low" ? (
+          the moment what the saver approved will not cover another buy, which
+          is the same condition as coverage reaching zero, so there is no
+          exhausted case left for this warning to report. The account above
+          does need both, since dollars can run out while the approved total is
+          untouched. */}
+      {limit.level === "low" ? (
         <Warning
           urgent={false}
-          text={`Your approval covers ${buysPhrase(approval.buys)}.`}
+          text={`What you approved covers ${buysPhrase(limit.buys)}.`}
           action={{ label: busy ? "Renewing" : "Tap to renew", onPress: onRenew, busy }}
         />
       ) : null}
@@ -882,11 +887,13 @@ function StartCard({
   if (block.kind === "foreign-delegate") {
     return (
       <section className="rounded-3xl border border-line bg-white/60 p-5">
-        <p className="text-[17px] font-medium">Your account is already spoken for</p>
+        <p className="text-[17px] font-medium">
+          Something else has permission to spend
+        </p>
         <p className="mt-2 text-[15px] leading-relaxed text-muted">
-          Something else has permission to spend from your dollar account.
-          Starting a plan here would take that permission away from it, so we
-          have left it alone.
+          Another app can already spend from your dollar account. Starting a
+          plan here would take that permission away from it, so we left it
+          alone.
         </p>
       </section>
     );
@@ -895,11 +902,11 @@ function StartCard({
   if (cash === 0n) {
     return (
       <section className="rounded-3xl border border-line bg-white/60 p-5">
-        <p className="text-[17px] font-medium">Add some dollars to begin</p>
+        <p className="text-[17px] font-medium">Add dollars to begin</p>
         <p className="mt-2 text-[15px] leading-relaxed text-muted">
-          Your plan buys with the dollars in your account. This runs on
+          Your plan spends from your dollar account. This runs on
           Solana&rsquo;s test network, so the money is test money and the
-          shares are not real.
+          shares aren&rsquo;t real.
         </p>
         {/* Without these a fresh wallet has nowhere to go: no dollars to save
             and no SOL to pay the fee with. */}
@@ -918,7 +925,7 @@ function StartCard({
             rel="noreferrer"
             className="rounded-xl border border-line px-4 py-3 text-center text-[15px] font-medium text-ink active:bg-line/40"
           >
-            Get test SOL, for fees
+            Get test SOL for fees
           </a>
         </div>
       </section>
@@ -992,7 +999,7 @@ function AssetPicker({
 
 /**
  * Starting a plan and changing one are the same screen: what to own, an
- * amount, a pace, and a plain statement of what that allows the app to take.
+ * amount, a pace, and a plain statement of the total it approves.
  * The wallet asks once, because the whole of it is a single transaction either
  * way.
  */
@@ -1162,7 +1169,7 @@ function PlanForm({
               }
             }}
             onChange={(event) => setAmountText(event.target.value)}
-            className="tabular w-24 bg-transparent text-right text-[20px] font-semibold text-ink outline-none placeholder:text-line"
+            className="tabular w-24 bg-transparent text-right text-[20px] font-semibold text-ink outline-none placeholder:text-hint"
           />
         </label>
 
@@ -1173,17 +1180,18 @@ function PlanForm({
               you a slice of {asset.displayName}.
             </p>
             <p className="mt-3 rounded-2xl bg-accentSoft px-4 py-3 text-[15px] leading-relaxed text-ink">
-              You are allowing this plan to take up to{" "}
+              You approve this plan to spend up to{" "}
               <span className="tabular font-semibold">
                 {formatMoney(fundedAmount(amount, cadenceSeconds), MONEY_DECIMALS)}
               </span>{" "}
-              in total, which is{" "}
-              {runsFunded(cadenceSeconds)} buys of{" "}
+              in total. That is {runsFunded(cadenceSeconds)} buys of{" "}
               {formatMoneyShort(amount, MONEY_DECIMALS)}, about{" "}
-              {approvalSpan(cadenceSeconds)} at this pace. Nothing more can
-              leave your account without you allowing it, and you can stop the
-              plan at any time.
-              {plan ? " This replaces what your current plan was allowed." : ""}
+              {approvalSpan(cadenceSeconds)} at this pace.{" "}
+              <span className="font-medium">
+                Nothing more can leave your dollar account without your
+                permission, and you can stop the plan at any time.
+              </span>
+              {plan ? " This replaces what you approved for your current plan." : ""}
             </p>
           </>
         ) : null}
@@ -1216,12 +1224,12 @@ function PlanForm({
 }
 
 /**
- * Taking money out, two ways, chosen side by side with what each pays.
+ * Withdrawing, two ways, chosen side by side with what each pays.
  *
- * Shares: the receipts are burned and the shares land in the saver's own
+ * As shares: the receipts are burned and the shares land in the saver's own
  * wallet, through whichever wrapper the vault can pay from, which is never
- * named. Cash: the same, sold to dollars in the same transaction, landing in
- * the dollar account plans buy from.
+ * named. As cash: the same, sold to dollars in the same transaction, landing
+ * in the dollar account plans spend from.
  *
  * The amount is always in shares, because that is what the saver has. Each
  * option then shows exactly what it pays: the share count worked out with the
@@ -1330,7 +1338,7 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
 
   const shortLine = (available: bigint, verb: string) =>
     available === 0n
-      ? "That is too small. Try a larger amount."
+      ? "That's too small. Try a larger amount."
       : `Right now you can ${verb} up to ${sharesLine(available)} at once.`;
 
   return (
@@ -1344,7 +1352,7 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
 
       <div className="flex-1 pt-6">
         <h2 className="text-[2rem] font-semibold leading-tight tracking-tight">
-          Take money out
+          Withdraw
         </h2>
 
         {held.length > 1 ? (
@@ -1385,7 +1393,7 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
                 }
               }}
               onChange={(event) => setText(event.target.value)}
-              className="tabular w-full min-w-0 bg-transparent text-[22px] font-semibold text-ink outline-none placeholder:text-line"
+              className="tabular w-full min-w-0 bg-transparent text-[22px] font-semibold text-ink outline-none placeholder:text-hint"
             />
             <span className="ml-2 text-[15px] text-muted">shares</span>
           </label>
@@ -1403,16 +1411,16 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
 
         {tooMuch ? (
           <p className="mt-6 text-[15px] leading-relaxed text-ink">
-            You have {sharesLine(owned)} of {asset.displayName}, so that is the
-            most you can take out.
+            You have {sharesLine(owned)} of {asset.displayName}, so that&rsquo;s
+            the most you can withdraw.
           </p>
         ) : valid ? (
           <div className="mt-6 space-y-3">
             <WayOption
               selected={way === "shares"}
               onSelect={() => setWay("shares")}
-              title="Take the shares"
-              detail="Sent to your wallet, to hold yourself."
+              title="As shares"
+              detail="Sent to your wallet, yours to hold."
               outcome={
                 !sources
                   ? "Working it out"
@@ -1421,7 +1429,7 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
                     : payout?.kind === "ok"
                     ? `${sharesLine(payout.received)} of ${asset.displayName}`
                     : payout?.kind === "short"
-                      ? shortLine(payout.available, "take out")
+                      ? shortLine(payout.available, "withdraw")
                       : ""
               }
               available={payout?.kind === "ok"}
@@ -1429,7 +1437,7 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
             <WayOption
               selected={way === "cash"}
               onSelect={() => setWay("cash")}
-              title="Cash out"
+              title="As cash"
               detail="Sold and paid into your dollar account, in one step."
               outcome={
                 quote === null
@@ -1437,10 +1445,10 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
                   : quote.kind === "ok"
                     ? formatMoney(quote.paymentOut, MONEY_DECIMALS)
                     : quote.kind === "short"
-                      ? shortLine(quote.available, "cash out")
+                      ? shortLine(quote.available, "sell")
                       : quote.kind === "closed"
                         ? CASH_OUT_CLOSED
-                        : "Cash out isn't available right now."
+                        : "Cash withdrawals aren't available right now."
               }
               available={quote?.kind === "ok"}
             />
@@ -1454,13 +1462,14 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
             ) : null}
             {advanced && way === "cash" ? (
               <p className="px-1 text-[13px] leading-relaxed text-muted">
-                Cash out sells through whichever token the vault holds most
-                of. The dollars you receive do not depend on which.
+                A cash withdrawal sells through whichever token the savings
+                vault holds most of. The dollars you receive don&rsquo;t depend
+                on which.
               </p>
             ) : null}
-            <p className="px-1 text-[13px] leading-relaxed text-muted">
-              Either way the shares leave your savings here, and any plan you
-              have keeps buying as before.
+            <p className="px-1 text-[14px] leading-relaxed text-ink">
+              Either way the shares leave your savings vault, and your plan
+              keeps buying as before.
             </p>
           </div>
         ) : null}
@@ -1503,16 +1512,14 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
         className="mt-6 w-full rounded-2xl bg-ink py-4 text-[17px] font-semibold text-paper active:opacity-90 disabled:opacity-40"
       >
         {savings.busy
-          ? way === "shares"
-            ? "Taking out"
-            : "Cashing out"
+          ? "Withdrawing"
           : advancedShares && chosen?.covered
-            ? `Take ${exactAmount(chosen.rawOut, chosen.source.wrapper.decimals)} ${chosen.source.wrapper.label}`
+            ? `Withdraw ${exactAmount(chosen.rawOut, chosen.source.wrapper.decimals)} ${chosen.source.wrapper.label}`
             : way === "shares" && payout?.kind === "ok"
-            ? `Take ${sharesLine(payout.received)}`
+            ? `Withdraw ${sharesLine(payout.received)}`
             : way === "cash" && quote?.kind === "ok"
-              ? `Cash out ${formatMoney(quote.paymentOut, MONEY_DECIMALS)}`
-              : "Take money out"}
+              ? `Withdraw ${formatMoney(quote.paymentOut, MONEY_DECIMALS)}`
+              : "Withdraw"}
       </motion.button>
 
       {savings.error ? (
@@ -1577,7 +1584,7 @@ function WrapperChooser({
               <span>
                 {row.covered
                   ? `= ${exactAmount(row.received, shareDecimals)} shares`
-                  : `vault holds ${exactAmount(row.source.vaultBalance, decimals)}`}
+                  : `savings vault holds ${exactAmount(row.source.vaultBalance, decimals)}`}
               </span>
             </span>
           </button>
@@ -1602,7 +1609,7 @@ function WrapperChooser({
   );
 }
 
-/** One way of taking money out, with what it pays shown before choosing it. */
+/** One way of withdrawing, with what it pays shown before choosing it. */
 function WayOption({
   selected,
   onSelect,
@@ -1733,8 +1740,8 @@ function UnderTheHood({ onClose }: { onClose: () => void }) {
         <p className="mt-4 text-[15px] leading-relaxed text-muted">
           Investire runs on Paritas, a Solana program. A share of NVIDIA is
           issued on chain by more than one provider, as different tokens. They
-          stand for the same share, but they are not interchangeable one for
-          one, and this is where the difference is handled.
+          stand for the same share, but they aren&rsquo;t interchangeable one
+          for one. This is where the difference is handled.
         </p>
       </div>
 
@@ -1749,11 +1756,11 @@ function UnderTheHood({ onClose }: { onClose: () => void }) {
       <section className="mt-8">
         <h3 className="text-[17px] font-semibold">Why your balance is in shares</h3>
         <p className="mt-2 text-[15px] leading-relaxed text-muted">
-          The app never keeps your balance as a count of tokens. Every buy is
-          converted, at the moment it lands, into equity units: the token
-          amount times that token&rsquo;s own multiplier, adjusted for its
-          decimals, at nine decimal places. One billion equity units is one
-          share, whichever token carried it.
+          Your balance is never a count of tokens. Every buy is converted, at
+          the moment it lands, into equity units: the token amount times that
+          token&rsquo;s own multiplier, adjusted for its decimals, at nine
+          decimal places. One billion equity units is one share, whichever
+          token carried it.
         </p>
         <p className="mt-3 text-[15px] leading-relaxed text-muted">
           So a buy that arrives as one token and a buy that arrives as the
@@ -1855,8 +1862,8 @@ function HoodAssetCard({ asset, sources, equity }: HoodAsset) {
         </div>
       ) : (
         <p className="mt-3 text-[14px] text-muted">
-          One token backs {asset.displayName} today. The vault is built to take
-          more, and would hold them side by side in the same way.
+          One token backs {asset.displayName} today. The savings vault is built
+          to take more, and would hold them side by side in the same way.
         </p>
       )}
 
@@ -1865,8 +1872,8 @@ function HoodAssetCard({ asset, sources, equity }: HoodAsset) {
         <Row label="Tokens held, in shares" value={`${exactAmount(held, asset.receiptDecimals)} shares`} />
       </div>
       <p className="text-[12px] leading-relaxed text-muted">
-        What the vault owes its savers, against what its tokens are worth at
-        today&rsquo;s multipliers. Each conversion rounds down in the
+        What the savings vault owes its savers, against what its tokens are
+        worth at today&rsquo;s multipliers. Each conversion rounds down in the
         vault&rsquo;s favour, so the second is never meant to fall short of
         the first.
       </p>

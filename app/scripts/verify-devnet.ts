@@ -123,6 +123,8 @@ function endpoint(): string {
 }
 
 async function main(): Promise<void> {
+  checkGlossary();
+
   const RPC_URL = endpoint();
   const walletPath = process.env.ANCHOR_WALLET;
   if (!walletPath) {
@@ -243,7 +245,8 @@ async function main(): Promise<void> {
 
   const sentence =
     `You save ${formatMoneyShort(created.amount, ADDRESS_BOOK.payment.decimals)} ` +
-    `${cadencePhrase(created.cadenceSeconds, created.nextDueTs)}. ` +
+    `${cadencePhrase(created.cadenceSeconds, created.nextDueTs)} ` +
+    `into ${assetBySymbol(created.asset).displayName}. ` +
     `You own ${formatShares(holdings.shares[created.asset] ?? 0n, ASSETS[0].receiptDecimals)} ` +
     `shares of ${assetBySymbol(created.asset).displayName}.`;
   ok(`headline: "${sentence}"`);
@@ -503,7 +506,7 @@ async function main(): Promise<void> {
       `in one ${size} byte transaction`,
   );
 
-  // --- the copy rule ------------------------------------------------------
+  // --- the copy rules -----------------------------------------------------
   const forbidden = ["NVDAx", "NVDAon", "multiplier", "basis point", "wrapper"];
   for (const word of forbidden) {
     if (sentence.toLowerCase().includes(word.toLowerCase())) {
@@ -514,6 +517,55 @@ async function main(): Promise<void> {
 
   console.log();
   console.log("Full flow verified against devnet.");
+}
+
+/**
+ * One term per concept, checked against the source rather than trusted to
+ * review. The app settled on withdraw, approved to spend and permission; the
+ * words they replaced read as different features to a saver who meets both,
+ * and drift back in one paste at a time.
+ *
+ * Comments are stripped first, so the rule governs what a saver reads and
+ * leaves the reasoning above each screen free to say whatever it needs to.
+ * Dashes are here too: the copy uses commas and full stops, never an em or an
+ * en dash.
+ */
+const RETIRED: { phrase: RegExp; instead: string }[] = [
+  { phrase: /\btake(?:s|n)? (?:it |them |the shares |money )?out\b/i, instead: "withdraw" },
+  { phrase: /\btaking (?:it |them |money )?out\b/i, instead: "withdrawing" },
+  { phrase: /\bcash(?:ing)? out\b/i, instead: "withdraw as cash, or cash withdrawal" },
+  { phrase: /\ballowed to take\b/i, instead: "approved to spend" },
+  { phrase: /\b(?:your|the) approval\b/i, instead: "what you approved" },
+  { phrase: /\ballowing (?:this|the|it)\b/i, instead: "permission, or approve to spend" },
+  // "Limit" read as a cap on each buy. The figure is a total.
+  { phrase: /\bspending limit\b/i, instead: "approved to spend, or what you approved" },
+  { phrase: /[\u2013\u2014]/, instead: "a comma or a full stop" },
+];
+
+const COPY_FILES = [
+  "src/components/Screens.tsx",
+  "src/lib/useSavings.ts",
+  "src/lib/paritas.ts",
+];
+
+/** Block and line comments out, so only what can reach a screen is checked. */
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+}
+
+function checkGlossary(): void {
+  for (const file of COPY_FILES) {
+    const copy = stripComments(
+      fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8"),
+    );
+    for (const { phrase, instead } of RETIRED) {
+      const hit = phrase.exec(copy);
+      if (hit) {
+        fail(`${file} says "${hit[0]}", which the glossary retired. Use ${instead}.`);
+      }
+    }
+  }
+  ok("one term per concept: withdraw, approved to spend, permission, no dashes");
 }
 
 main().catch((err) => {
