@@ -8,7 +8,9 @@ import {
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { resolveRpcEndpoint } from "@/lib/config";
 
-import "@solana/wallet-adapter-react-ui/styles.css";
+// The picker's styles are this app's own. The library's stylesheet fetches a
+// font from Google on every page load; see wallet-picker.css.
+import "./wallet-picker.css";
 
 /**
  * Wallet and connection context, mounted client side only.

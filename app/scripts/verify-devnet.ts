@@ -62,6 +62,7 @@ import {
   formatShares,
   whenNext,
 } from "../src/lib/format";
+import { PALETTE, Palette, Theme, Token } from "../src/lib/palette";
 
 /**
  * Mirrors the retry discipline in scripts/devnet-lib.ts rather than importing
@@ -124,6 +125,8 @@ function endpoint(): string {
 
 async function main(): Promise<void> {
   checkGlossary();
+  checkColours();
+  checkContrast();
 
   const RPC_URL = endpoint();
   const walletPath = process.env.ANCHOR_WALLET;
@@ -544,13 +547,19 @@ const RETIRED: { phrase: RegExp; instead: string }[] = [
 
 const COPY_FILES = [
   "src/components/Screens.tsx",
+  "src/components/ThemeControl.tsx",
   "src/lib/useSavings.ts",
   "src/lib/paritas.ts",
 ];
 
-/** Block and line comments out, so only what can reach a screen is checked. */
+/**
+ * Block and line comments out, so only what can reach a screen is checked.
+ * Blanked rather than removed, keeping every line where it was, so a failure
+ * can say which line it found.
+ */
 function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const blank = (comment: string) => comment.replace(/[^\n]/g, " ");
+  return source.replace(/\/\*[\s\S]*?\*\//g, blank).replace(/^\s*\/\/.*$/gm, blank);
 }
 
 function checkGlossary(): void {
@@ -566,6 +575,178 @@ function checkGlossary(): void {
     }
   }
   ok("one term per concept: withdraw, approved to spend, permission, no dashes");
+}
+
+/**
+ * Every colour a saver sees is a token from src/lib/palette.ts, and the theme
+ * changes what each token is. A colour written anywhere else stays the same
+ * in both themes, which in one of them is text the colour of the page behind
+ * it. So this fails on the forms a stray colour arrives in: a hex, an rgb()
+ * or hsl() that is not reading a token, one of Tailwind's own palette
+ * classes, and a colour keyword used as a value.
+ *
+ * It covers everything under src/ and the Tailwind config, all but the
+ * palette itself. Comments are stripped first, as for the glossary, so the
+ * reasoning above a screen can still name a colour.
+ */
+const KEYWORDS =
+  "white|black|gr[ae]y|silver|red|maroon|orange|yellow|olive|lime|green|teal|aqua|cyan|" +
+  "blue|navy|purple|fuchsia|magenta|pink|brown|beige|ivory|gold|indigo|violet|crimson|" +
+  "coral|salmon|khaki|tan";
+const TAILWIND_HUES =
+  "slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|" +
+  "sky|blue|indigo|violet|purple|fuchsia|pink|rose";
+
+const HARDCODED: { pattern: RegExp; what: string; only?: string }[] = [
+  // #fff, #FBF9F5, #00000080. Not &#8217;, which is a character.
+  { pattern: /(?<![&\w])#(?:[\da-f]{8}|[\da-f]{6}|[\da-f]{3,4})\b/i, what: "a hex colour" },
+  // rgb(var(--color-ink) / 0.4) reads a token and passes; rgb(0 0 0) does not.
+  {
+    pattern: /\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\((?!\s*var\(--color-)|\b(?:color-mix|light-dark)\(/i,
+    what: "a colour function that is not reading a token",
+  },
+  // text-white, bg-black/60, border-gray-200, from-emerald-400. These no
+  // longer generate anything, so one left in is also a colour gone missing.
+  {
+    pattern: new RegExp(
+      `(?<![\\w-])(?:bg|text|border(?:-[xytrbl])?|ring(?:-offset)?|outline|decoration|divide|` +
+        `placeholder|caret|accent|fill|stroke|from|via|to|shadow)-` +
+        `(?:white|black|(?:${TAILWIND_HUES})-\\d{2,3})(?![\\w-])`,
+    ),
+    what: "a Tailwind palette colour",
+  },
+  // fill="white", style={{ color: "black" }}, bg-[white]
+  {
+    pattern: new RegExp(`["'\`[](?:${KEYWORDS})["'\`\\]]`, "i"),
+    what: "a colour keyword",
+  },
+  // color: white; and border: 1px solid black; in a stylesheet
+  {
+    pattern: new RegExp(`:[^;{}\\n]*\\b(?:${KEYWORDS})\\b[^;{}\\n]*;`, "i"),
+    what: "a colour keyword",
+    only: ".css",
+  },
+];
+
+const PALETTE_FILE = "src/lib/palette.ts";
+
+/** Every file whose colours could reach a screen, relative to app/. */
+function themedFiles(): string[] {
+  const src = new URL("../src/", import.meta.url);
+  return [
+    "tailwind.config.ts",
+    ...fs
+      .readdirSync(src, { recursive: true, encoding: "utf8" })
+      .filter((file) => /\.(?:tsx?|css)$/.test(file))
+      .map((file) => `src/${file.split(path.sep).join("/")}`)
+      .filter((file) => file !== PALETTE_FILE),
+  ].sort();
+}
+
+function checkColours(): void {
+  const files = themedFiles();
+  for (const file of files) {
+    const source = stripComments(
+      fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8"),
+    );
+    for (const { pattern, what, only } of HARDCODED) {
+      if (only && !file.endsWith(only)) {
+        continue;
+      }
+      const hit = pattern.exec(source);
+      if (hit) {
+        const line = source.slice(0, hit.index).split("\n").length;
+        const found = hit[0].replace(/^[:\s"'`[]+|["'`\];\s]+$/g, "");
+        fail(
+          `${file}:${line} has ${what}, "${found}". ` +
+            `Use a token from ${PALETTE_FILE}, or add one there for both themes.`,
+        );
+      }
+    }
+  }
+  ok(`no colour outside the palette, across ${files.length} files`);
+}
+
+/**
+ * Both themes against WCAG AA, 4.5:1, for every pair of text and background
+ * the screens render, computed from the palette so a colour tuned later
+ * cannot quietly undo it. A layer written [token, alpha, under] is that token
+ * at that alpha over another, the way `bg-line/40` or `text-paper/70` paints.
+ * 4.5:1 is the bar for small text, and all of it is held there, since the
+ * smallest copy here is 12px. Disabled buttons, faded by opacity, are the
+ * exception WCAG itself makes.
+ *
+ * The pairs are listed by hand, from the screens. A component that puts a
+ * token on a background not listed here needs a line here too.
+ */
+type Layer = Token | [Token, number, Layer];
+
+const PAIRS: [text: Layer, on: Layer, where: string][] = [
+  ["ink", "paper", "headlines, body, errors"],
+  ["ink", "card", "cards, inputs, the wallet picker"],
+  ["ink", "accentSoft", "notices, the approval summary"],
+  ["ink", ["line", 0.4, "card"], "a pressed button or hovered wallet, on a card"],
+  ["muted", "paper", "labels, Back, the footer, the theme control"],
+  ["muted", "card", "captions on cards, Detected"],
+  ["muted", "accentSoft", "the chosen token's raw units"],
+  ["hint", "card", "placeholders"],
+  ["accent", "paper", "Withdraw, Tap to renew"],
+  ["accent", "card", "Explorer links"],
+  ["accent", "accentSoft", "the streak"],
+  ["paper", "ink", "filled buttons, chosen pills"],
+  [["paper", 0.7, "ink"], "ink", "captions on chosen pills"],
+  ["paper", "accent", "Renew"],
+];
+
+/** A layer as the 8-bit colour a browser composites it to. */
+function paint(layer: Layer, palette: Palette): number[] {
+  if (typeof layer === "string") {
+    return [1, 3, 5].map((at) => parseInt(palette[layer].slice(at, at + 2), 16));
+  }
+  const [token, alpha, under] = layer;
+  const bottom = paint(under, palette);
+  return paint(token, palette).map((channel, i) =>
+    Math.round(alpha * channel + (1 - alpha) * bottom[i]),
+  );
+}
+
+/** WCAG 2 relative luminance. */
+function luminance(rgb: number[]): number {
+  const [r, g, b] = rgb.map((channel) => {
+    const c = channel / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrast(a: number[], b: number[]): number {
+  const [lighter, darker] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function checkContrast(): void {
+  const name = (layer: Layer): string =>
+    typeof layer === "string" ? layer : `${layer[0]}/${Math.round(layer[1] * 100)}`;
+  const themes = Object.keys(PALETTE) as Theme[];
+
+  console.log(`      ${"text on background".padEnd(26)}${themes.map((theme) => theme.padStart(7)).join("")}`);
+  let lowest = Infinity;
+  for (const [text, on, where] of PAIRS) {
+    const label = `${name(text)} on ${name(on)}`;
+    const ratios = themes.map((theme) =>
+      contrast(paint(text, PALETTE[theme]), paint(on, PALETTE[theme])),
+    );
+    console.log(
+      `      ${label.padEnd(26)}${ratios.map((ratio) => ratio.toFixed(2).padStart(7)).join("")}   ${where}`,
+    );
+    ratios.forEach((ratio, i) => {
+      if (ratio < 4.5) {
+        fail(`${label} is ${ratio.toFixed(2)}:1 in ${themes[i]}, under WCAG AA's 4.5:1 (${where})`);
+      }
+      lowest = Math.min(lowest, ratio);
+    });
+  }
+  ok(`WCAG AA in ${themes.join(" and ")}: every pair 4.5:1 or more, the lowest ${lowest.toFixed(2)}:1`);
 }
 
 main().catch((err) => {

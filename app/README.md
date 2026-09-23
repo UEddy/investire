@@ -279,6 +279,50 @@ real build inputs, and the files they come from live outside `app/` and are
 never uploaded when `app/` is the deploy root. `.vercelignore` excludes only
 build output so the generated copies ship.
 
+## Light and dark
+
+The app follows the phone's light or dark setting. A small System, Light,
+Dark control at the foot of the welcome and home screens overrides it, and
+the choice is kept in local storage, on this device only. System is never
+stored; it is the absence of a choice.
+
+Every colour is a token from `src/lib/palette.ts`, defined for both themes:
+paper, card, ink, muted, hint, line, accent, accentSoft, and scrim behind the
+one dialog. Components name tokens (`bg-card`, `text-muted`), never values.
+Each token is a CSS variable the theme swaps underneath them, so no component
+can be right in one theme and invisible in the other, and Tailwind's own
+palette is switched off, so `text-white` generates nothing. Dark stays warm:
+its page is the light theme's ink, `#16130F`, not black. The wallet picker is
+styled by the app's own `wallet-picker.css` on the same tokens, instead of the
+library's stylesheet, which paints it navy and fetches a font from Google.
+
+There is no flash of the wrong theme. With nothing stored, CSS alone picks
+from `prefers-color-scheme`. A stored choice is applied by a few lines inlined
+at the top of `<head>`, which the browser runs before it parses the body or
+paints, and which also set the theme colour so the status bar matches.
+
+Switching crossfades the page once, through the browser's view transition,
+and under reduced motion it switches at once. It is the one transition that is
+not a spring, because nothing moves.
+
+`npm run verify` holds all of this before it touches devnet. It fails on a
+colour written anywhere but the palette (a hex, an `rgb()` not reading a
+token, a Tailwind palette class, a colour keyword), and on any text and
+background pair under WCAG AA's 4.5:1 in either theme, printing each ratio.
+
+## Type
+
+One typeface, Noto Sans, from a file in `src/app/fonts` (SIL Open Font
+License, beside it). `next/font/local` builds it in, so neither the build nor
+any visitor asks a font service for anything. It is humanist, which suits
+paper and ink, its x-height keeps 12px and 13px copy readable, and one variable
+file carries every weight. Until it loads, text sits in a local Arial sized to
+its measurements, so nothing moves when it arrives.
+
+Every figure is tabular, app wide: the share counter's digits keep one width
+as it ticks, and a money or share figure in a sentence, a button or an error
+does too, without a class to remember.
+
 ## Motion
 
 Spring transitions throughout, no durations or easing curves. `useSpring`

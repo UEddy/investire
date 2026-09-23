@@ -58,6 +58,7 @@ import {
   whenNext,
 } from "@/lib/format";
 import { Motion, SPRING_SOFT, ShareCounter } from "./motion";
+import { ThemeControl } from "./ThemeControl";
 
 const MONEY_DECIMALS = ADDRESS_BOOK.payment.decimals;
 
@@ -126,7 +127,7 @@ function Welcome() {
           {ASSETS.map((asset) => (
             <li
               key={asset.symbol}
-              className="flex items-baseline justify-between rounded-2xl border border-line bg-white/60 px-4 py-3"
+              className="flex items-baseline justify-between rounded-2xl border border-line bg-card px-4 py-3"
             >
               <span className="text-[17px] font-medium">{asset.displayName}</span>
               <span className="text-[14px] text-muted">{asset.description}</span>
@@ -145,6 +146,10 @@ function Welcome() {
       >
         Get started
       </motion.button>
+
+      <div className="mt-6 flex justify-center">
+        <ThemeControl />
+      </div>
     </Shell>
   );
 }
@@ -161,7 +166,7 @@ function Welcome() {
 function NetworkNote() {
   const cluster = ADDRESS_BOOK.cluster;
   return (
-    <section className="mt-8 rounded-2xl border border-line bg-white/60 px-4 py-3">
+    <section className="mt-8 rounded-2xl border border-line bg-card px-4 py-3">
       <p className="text-[15px] font-medium">
         First, set your wallet to {cluster}
       </p>
@@ -351,7 +356,7 @@ function Hero({
       </div>
 
       {shown.length === 0 ? (
-        <p className="tabular mt-2 text-[4rem] font-semibold leading-none tracking-tight">
+        <p className="mt-2 text-[4rem] font-semibold leading-none tracking-tight">
           <ShareCounter value={0} />
         </p>
       ) : (
@@ -359,7 +364,7 @@ function Hero({
           <div key={asset.symbol} className={single ? "" : "mt-3"}>
             <p
               className={[
-                "tabular mt-2 font-semibold leading-none tracking-tight",
+                "mt-2 font-semibold leading-none tracking-tight",
                 single ? "text-[4rem]" : "text-[2.75rem]",
               ].join(" ")}
             >
@@ -379,7 +384,7 @@ function Hero({
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
           transition={SPRING_SOFT}
-          className="tabular mt-4 inline-block rounded-full bg-accentSoft px-3 py-1 text-[13px] font-medium text-accent"
+          className="mt-4 inline-block rounded-full bg-accentSoft px-3 py-1 text-[13px] font-medium text-accent"
         >
           {streak}
         </motion.p>
@@ -419,7 +424,7 @@ function ValueCard({ portfolio, prices }: { portfolio: Portfolio; prices: Prices
     <motion.section
       layout
       transition={SPRING_SOFT}
-      className="mb-4 rounded-3xl border border-line bg-white/60 p-5"
+      className="mb-4 rounded-3xl border border-line bg-card p-5"
     >
       <p className="text-[13px] font-medium uppercase tracking-[0.14em] text-muted">
         Worth today
@@ -427,10 +432,10 @@ function ValueCard({ portfolio, prices }: { portfolio: Portfolio; prices: Prices
 
       {portfolio.value !== null ? (
         <>
-          <p className="tabular mt-1 text-[28px] font-semibold leading-tight">
+          <p className="mt-1 text-[28px] font-semibold leading-tight">
             {formatMoney(portfolio.value, MONEY_DECIMALS)}
           </p>
-          <p className="tabular mt-1 text-[15px] text-ink">
+          <p className="mt-1 text-[15px] text-ink">
             {portfolio.gain !== null
               ? changePhrase(portfolio.gain, portfolio.gainPercent, MONEY_DECIMALS)
               : null}
@@ -446,7 +451,7 @@ function ValueCard({ portfolio, prices }: { portfolio: Portfolio; prices: Prices
               ? "Checking today's prices"
               : "Today's value isn't available right now."}
           </p>
-          <p className="tabular mt-1 text-[15px] text-ink">
+          <p className="mt-1 text-[15px] text-ink">
             {formatMoney(portfolio.invested, MONEY_DECIMALS)}{" "}
             <span className="text-muted">put in</span>
           </p>
@@ -460,13 +465,15 @@ function ValueCard({ portfolio, prices }: { portfolio: Portfolio; prices: Prices
             <div key={position.symbol} className="py-2">
               <div className="flex items-baseline justify-between gap-3">
                 <span className="text-[15px] font-medium">{asset.displayName}</span>
-                <span className="tabular text-[15px] font-medium">
+                <span className="text-[15px] font-medium">
                   {position.value !== null
                     ? formatMoney(position.value, MONEY_DECIMALS)
                     : `${formatShares(position.shares, asset.receiptDecimals)} shares`}
                 </span>
               </div>
-              <div className="tabular mt-0.5 flex items-baseline justify-between gap-3 text-[13px] text-muted">
+              {/* Wraps as two whole phrases, the change moving under the
+                  rest, rather than each breaking with one word left over. */}
+              <div className="mt-0.5 flex flex-wrap items-baseline justify-between gap-x-3 text-[13px] text-muted">
                 <span>
                   {position.value !== null
                     ? `${formatShares(position.shares, asset.receiptDecimals)} shares \u00b7 `
@@ -474,7 +481,7 @@ function ValueCard({ portfolio, prices }: { portfolio: Portfolio; prices: Prices
                   {formatMoney(position.invested, MONEY_DECIMALS)} put in
                 </span>
                 {position.gain !== null ? (
-                  <span className="text-ink">
+                  <span className="ml-auto text-ink">
                     {changePhrase(position.gain, position.gainPercent, MONEY_DECIMALS)}
                   </span>
                 ) : null}
@@ -566,7 +573,7 @@ function PlanCard({
     <motion.section
       layout
       transition={SPRING_SOFT}
-      className="overflow-hidden rounded-3xl border border-line bg-white/60 p-5"
+      className="overflow-hidden rounded-3xl border border-line bg-card p-5"
     >
       <button onClick={onToggle} className="w-full text-left">
         <p className="text-[19px] font-medium leading-snug">
@@ -589,7 +596,7 @@ function PlanCard({
           <button
             onClick={onResume}
             disabled={busy}
-            className="mt-3 w-full rounded-xl bg-accent py-3 text-[15px] font-semibold text-white active:opacity-90 disabled:opacity-50"
+            className="mt-3 w-full rounded-xl bg-accent py-3 text-[15px] font-semibold text-paper active:opacity-90 disabled:opacity-50"
           >
             {busy
               ? "Renewing"
@@ -727,7 +734,7 @@ function Allowance({ plan, allowance }: { plan: Plan; allowance: bigint }) {
       <p className="text-[13px] font-medium uppercase tracking-[0.14em] text-muted">
         Approved to spend
       </p>
-      <p className="tabular mt-1 text-[24px] font-semibold">
+      <p className="mt-1 text-[24px] font-semibold">
         {formatMoney(allowance, MONEY_DECIMALS)}
       </p>
       <p className="mt-1 text-[15px] leading-relaxed text-muted">
@@ -870,7 +877,7 @@ function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-baseline justify-between py-2">
       <span className="text-[15px] text-muted">{label}</span>
-      <span className="tabular text-[15px] font-medium">{value}</span>
+      <span className="text-[15px] font-medium">{value}</span>
     </div>
   );
 }
@@ -886,7 +893,7 @@ function StartCard({
 }) {
   if (block.kind === "foreign-delegate") {
     return (
-      <section className="rounded-3xl border border-line bg-white/60 p-5">
+      <section className="rounded-3xl border border-line bg-card p-5">
         <p className="text-[17px] font-medium">
           Something else has permission to spend
         </p>
@@ -901,7 +908,7 @@ function StartCard({
 
   if (cash === 0n) {
     return (
-      <section className="rounded-3xl border border-line bg-white/60 p-5">
+      <section className="rounded-3xl border border-line bg-card p-5">
         <p className="text-[17px] font-medium">Add dollars to begin</p>
         <p className="mt-2 text-[15px] leading-relaxed text-muted">
           Your plan spends from your dollar account. This runs on
@@ -970,7 +977,7 @@ function AssetPicker({
             whileTap={{ scale: 0.97 }}
             className={[
               "relative rounded-2xl px-4 py-3.5 text-left",
-              selected ? "text-paper" : "border border-line bg-white/60 text-ink",
+              selected ? "text-paper" : "border border-line bg-card text-ink",
             ].join(" ")}
           >
             {selected ? (
@@ -1094,7 +1101,7 @@ function PlanForm({
           <AssetPicker value={assetSymbol} onChange={setAssetSymbol} />
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl border border-line bg-white/60 p-1">
+        <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl border border-line bg-card p-1">
           {CADENCES.map((option) => {
             const selected = option.seconds === cadenceSeconds;
             return (
@@ -1131,8 +1138,8 @@ function PlanForm({
                 }}
                 whileTap={{ scale: 0.96 }}
                 className={[
-                  "tabular relative rounded-2xl py-5 text-[22px] font-semibold",
-                  selected ? "text-paper" : "border border-line bg-white/60 text-ink",
+                  "relative rounded-2xl py-5 text-[22px] font-semibold",
+                  selected ? "text-paper" : "border border-line bg-card text-ink",
                 ].join(" ")}
               >
                 {/* One pill shared between the chips via layoutId, so
@@ -1151,7 +1158,7 @@ function PlanForm({
 
         <label
           className={[
-            "mt-3 flex items-center rounded-2xl border bg-white/60 px-4 py-3.5",
+            "mt-3 flex items-center rounded-2xl border bg-card px-4 py-3.5",
             presetSelected ? "border-line" : "border-ink",
           ].join(" ")}
         >
@@ -1169,7 +1176,7 @@ function PlanForm({
               }
             }}
             onChange={(event) => setAmountText(event.target.value)}
-            className="tabular w-24 bg-transparent text-right text-[20px] font-semibold text-ink outline-none placeholder:text-hint"
+            className="w-24 bg-transparent text-right text-[20px] font-semibold text-ink outline-none placeholder:text-hint"
           />
         </label>
 
@@ -1181,7 +1188,7 @@ function PlanForm({
             </p>
             <p className="mt-3 rounded-2xl bg-accentSoft px-4 py-3 text-[15px] leading-relaxed text-ink">
               You approve this plan to spend up to{" "}
-              <span className="tabular font-semibold">
+              <span className="font-semibold">
                 {formatMoney(fundedAmount(amount, cadenceSeconds), MONEY_DECIMALS)}
               </span>{" "}
               in total. That is {runsFunded(cadenceSeconds)} buys of{" "}
@@ -1377,7 +1384,7 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
         <div className="mt-6 flex gap-3">
           <label
             className={[
-              "flex flex-1 items-center rounded-2xl border bg-white/60 px-4 py-3.5",
+              "flex flex-1 items-center rounded-2xl border bg-card px-4 py-3.5",
               all ? "border-line" : "border-ink",
             ].join(" ")}
           >
@@ -1393,7 +1400,7 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
                 }
               }}
               onChange={(event) => setText(event.target.value)}
-              className="tabular w-full min-w-0 bg-transparent text-[22px] font-semibold text-ink outline-none placeholder:text-hint"
+              className="w-full min-w-0 bg-transparent text-[22px] font-semibold text-ink outline-none placeholder:text-hint"
             />
             <span className="ml-2 text-[15px] text-muted">shares</span>
           </label>
@@ -1402,7 +1409,7 @@ function WithdrawForm({ savings, onClose }: { savings: Savings; onClose: () => v
             onClick={() => setAll(true)}
             className={[
               "rounded-2xl px-5 text-[15px] font-semibold",
-              all ? "bg-ink text-paper" : "border border-line bg-white/60 text-ink",
+              all ? "bg-ink text-paper" : "border border-line bg-card text-ink",
             ].join(" ")}
           >
             All
@@ -1557,7 +1564,7 @@ function WrapperChooser({
       : [null, null];
 
   return (
-    <div className="rounded-2xl border border-line bg-white/60 p-3">
+    <div className="rounded-2xl border border-line bg-card p-3">
       {rows.map((row) => {
         const selected = row.source.wrapper.mint === chosenMint;
         const { label, decimals, mint } = row.source.wrapper;
@@ -1631,7 +1638,7 @@ function WayOption({
       onClick={onSelect}
       className={[
         "relative w-full rounded-2xl px-4 py-3.5 text-left",
-        selected ? "text-paper" : "border border-line bg-white/60 text-ink",
+        selected ? "text-paper" : "border border-line bg-card text-ink",
       ].join(" ")}
     >
       {selected ? (
@@ -1641,7 +1648,7 @@ function WayOption({
         <span className="text-[17px] font-semibold">{title}</span>
         <span
           className={[
-            "tabular text-right",
+            "text-right",
             available ? "text-[17px] font-semibold" : "text-[13px]",
             !available ? (selected ? "text-paper/70" : "text-muted") : "",
           ].join(" ")}
@@ -1668,7 +1675,8 @@ function capitalise(text: string): string {
 /**
  * The way into the under the hood screen sits here, at the very bottom, in
  * the quietest type on the page. One tap for anyone who wants it; easy to
- * never notice for anyone who does not.
+ * never notice for anyone who does not. The theme control lives here for the
+ * same reason.
  */
 function Footer({ cash, onHood }: { cash: bigint; onHood: () => void }) {
   return (
@@ -1679,6 +1687,9 @@ function Footer({ cash, onHood }: { cash: bigint; onHood: () => void }) {
       <button onClick={onHood} className="mt-3 px-2 py-1 text-[13px] text-muted underline decoration-line underline-offset-4">
         Under the hood
       </button>
+      <div className="mt-4 flex justify-center">
+        <ThemeControl />
+      </div>
     </footer>
   );
 }
@@ -1771,7 +1782,7 @@ function UnderTheHood({ onClose }: { onClose: () => void }) {
         </p>
       </section>
 
-      <section className="mt-8 rounded-2xl border border-line bg-white/60 p-4 text-[14px]">
+      <section className="mt-8 rounded-2xl border border-line bg-card p-4 text-[14px]">
         <Row label="Program" value={short(PROGRAM_ID.toBase58())} />
         <a
           href={explorer(PROGRAM_ID.toBase58())}
@@ -1806,7 +1817,7 @@ function HoodAssetCard({ asset, sources, equity }: HoodAsset) {
 
       <div className="mt-3 space-y-3">
         {sources.map((source) => (
-          <div key={source.wrapper.mint} className="rounded-2xl border border-line bg-white/60 p-4">
+          <div key={source.wrapper.mint} className="rounded-2xl border border-line bg-card p-4">
             <div className="flex items-baseline justify-between">
               <span className="text-[16px] font-semibold">{source.wrapper.label}</span>
               <a

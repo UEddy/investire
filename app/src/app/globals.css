@@ -2,20 +2,44 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: light;
-}
+/* Every colour here is a token, read as rgb(var(--color-*)). The values live
+   in src/lib/palette.ts, and tailwind.config.ts emits them for both themes
+   along with color-scheme, so the browser's own scrollbars and controls
+   follow the theme as well. */
 
 html,
 body {
-  background: theme("colors.paper");
-  color: theme("colors.ink");
+  background: rgb(var(--color-paper));
+  color: rgb(var(--color-ink));
   -webkit-font-smoothing: antialiased;
 }
 
-/* The hero number is read at a glance, so it gets tabular figures: digits that
-   do not change width as the counter ticks, or the whole line jitters. */
-.tabular {
+/* Tabular figures everywhere, so every digit is the same width. The share
+   counter does not jitter as it ticks, and a money or share figure keeps its
+   shape wherever it sits: in the hero, in a sentence, on a button, in an
+   error. Set once rather than per element, because figures turn up in all of
+   those and a class on each is one more to forget. Browsers give form
+   controls their own font settings, so those are told to inherit. */
+html {
   font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
+}
+
+/* Noto sets wider than the serif the app used to fall back to, so more lines
+   wrap, and a paragraph ending on one stranded word reads as a mistake.
+   Browsers that can avoid that do; the rest wrap as before. */
+html {
+  text-wrap: pretty;
+}
+
+button,
+input,
+select,
+textarea {
+  font-variant-numeric: inherit;
+}
+
+/* Tailwind's own placeholder colour is a fixed grey. */
+input::placeholder,
+textarea::placeholder {
+  color: rgb(var(--color-hint));
 }

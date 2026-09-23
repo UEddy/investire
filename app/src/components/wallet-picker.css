@@ -1,0 +1,178 @@
+/* The wallet picker is drawn by @solana/wallet-adapter-react-ui and styled
+   here rather than by the library's own stylesheet. That stylesheet opens by
+   importing DM Sans from Google Fonts, which every page load then fetched,
+   and it paints the picker navy and purple in both themes. This keeps its
+   layout, from version 0.9.40, and takes the app's type and tokens instead.
+   Only the parts the picker renders are here: the library's connect button
+   and dropdown are not used. The wallets' own logos keep their colours. */
+
+.wallet-adapter-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1040;
+  overflow-y: auto;
+  opacity: 0;
+  transition: opacity linear 150ms;
+}
+
+.wallet-adapter-modal.wallet-adapter-modal-fade-in {
+  opacity: 1;
+}
+
+.wallet-adapter-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(var(--color-scrim) / 0.5);
+}
+
+.wallet-adapter-modal-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 3rem;
+  min-height: calc(100vh - 6rem);
+}
+
+@media (max-width: 480px) {
+  .wallet-adapter-modal-container {
+    margin: 1rem;
+    min-height: calc(100vh - 2rem);
+  }
+}
+
+.wallet-adapter-modal-wrapper {
+  position: relative;
+  z-index: 1050;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
+  max-width: 400px;
+  border: 1px solid rgb(var(--color-line));
+  border-radius: 10px;
+  background: rgb(var(--color-card));
+}
+
+.wallet-adapter-modal-button-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  border: none;
+  border-radius: 50%;
+  background: rgb(var(--color-line));
+  cursor: pointer;
+}
+
+.wallet-adapter-modal-button-close svg {
+  fill: rgb(var(--color-muted));
+  transition: fill 200ms ease;
+}
+
+.wallet-adapter-modal-button-close:hover svg {
+  fill: rgb(var(--color-ink));
+}
+
+.wallet-adapter-modal-title {
+  margin: 0;
+  padding: 64px 48px 48px;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 36px;
+  text-align: center;
+  color: rgb(var(--color-ink));
+}
+
+@media (max-width: 374px) {
+  .wallet-adapter-modal-title {
+    font-size: 18px;
+  }
+}
+
+.wallet-adapter-modal-list {
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.wallet-adapter-collapse {
+  width: 100%;
+}
+
+/* One wallet: its logo, its name, and "Detected" if the browser has it. */
+.wallet-adapter-modal-list .wallet-adapter-button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 48px;
+  padding: 0 24px;
+  border: none;
+  background-color: transparent;
+  font-size: 18px;
+  line-height: 48px;
+  color: rgb(var(--color-ink));
+  cursor: pointer;
+}
+
+.wallet-adapter-modal-list .wallet-adapter-button:hover {
+  background-color: rgb(var(--color-line) / 0.4);
+}
+
+.wallet-adapter-button-start-icon,
+.wallet-adapter-button-start-icon img {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+}
+
+.wallet-adapter-button-start-icon {
+  margin-right: 12px;
+}
+
+.wallet-adapter-modal-list .wallet-adapter-button span {
+  margin-left: auto;
+  font-size: 14px;
+  color: rgb(var(--color-muted));
+}
+
+.wallet-adapter-modal-list-more {
+  display: flex;
+  align-items: center;
+  align-self: flex-end;
+  padding: 12px 24px 24px 12px;
+  border: none;
+  background-color: transparent;
+  color: rgb(var(--color-ink));
+  cursor: pointer;
+}
+
+.wallet-adapter-modal-list-more svg {
+  margin-left: 0.5rem;
+  fill: rgb(var(--color-ink));
+  transition: transform 100ms ease;
+}
+
+.wallet-adapter-modal-list-more-icon-rotate {
+  transform: rotate(180deg);
+}
+
+.wallet-adapter-modal-middle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0 24px 24px;
+}
+
+/* Shown when no wallet is installed: Solana's gradient, redrawn in accent. */
+.wallet-adapter-modal-middle stop {
+  stop-color: rgb(var(--color-accent));
+}
