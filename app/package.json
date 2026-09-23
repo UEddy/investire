@@ -4,11 +4,12 @@
   "scripts": {
     "sync-config": "node scripts/sync-config.mjs",
     "predev": "npm run sync-config",
-    "prebuild": "npm run sync-config",
+    "prebuild": "npm run sync-config && npm run check-copy",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "verify": "npm run sync-config && tsx scripts/verify-devnet.ts"
+    "check-copy": "tsx scripts/check-screen-copy.ts",
+    "verify": "npm run sync-config && npm run check-copy && tsx scripts/verify-devnet.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

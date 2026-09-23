@@ -65,6 +65,20 @@ class MarketClosedError extends Error {
   }
 }
 
+/**
+ * The cash withdrawal route answered with something other than a transaction.
+ * The status and code are for the console; the screen gets a sentence.
+ */
+class CashOutServiceError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string | undefined,
+  ) {
+    super(`cash withdrawal route answered ${status} ${code ?? ""}`.trim());
+    this.name = "CashOutServiceError";
+  }
+}
+
 /** The price moved between the quote on screen and the transaction built. */
 class CashOutMovedError extends Error {
   constructor() {
@@ -188,7 +202,12 @@ export function useSavings(): SavingsState {
   const [limits, setLimits] = useState<Record<string, PlanLimits> | null>(null);
   const [prices, setPrices] = useState<Prices>({ status: "loading" });
   const [executions, setExecutions] = useState<Execution[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setShownError] = useState<string | null>(null);
+  // The only way onto the screen, so nothing can skip the check in onScreen.
+  const setError = useCallback(
+    (text: string | null) => setShownError(text === null ? null : onScreen(text)),
+    [],
+  );
 
   const refresh = useCallback(async () => {
     if (!owner) {
@@ -222,11 +241,14 @@ export function useSavings(): SavingsState {
       );
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // A read, so nothing was attempted and nothing needs undoing. Whatever
+      // the RPC proxy said is for a developer, and it goes to the console.
+      console.error("[savings] reading the chain failed", err);
+      setError(NETWORK_DOWN);
     } finally {
       setLoading(false);
     }
-  }, [connection, owner, wallet]);
+  }, [connection, owner, setError, wallet]);
 
   useEffect(() => {
     setLoading(true);
@@ -313,13 +335,14 @@ export function useSavings(): SavingsState {
         await refresh();
         return true;
       } catch (err) {
+        console.error("[savings] transaction failed", err);
         setError(friendly(err));
         return false;
       } finally {
         setBusy(false);
       }
     },
-    [connection, owner, refresh, wallet],
+    [connection, owner, refresh, setError, wallet],
   );
 
   const createPlan = useCallback(
@@ -411,8 +434,9 @@ export function useSavings(): SavingsState {
             if (body.error === "market-closed") {
               throw new MarketClosedError();
             }
-            throw new Error(
-              `the cash withdrawal service answered ${body.error ?? body.status}`,
+            throw new CashOutServiceError(
+              body.status as number,
+              body.error as string | undefined,
             );
           }
           if (BigInt(body.paymentOut as string) < expected) {
@@ -427,7 +451,7 @@ export function useSavings(): SavingsState {
     [run],
   );
 
-  const clearError = useCallback(() => setError(null), []);
+  const clearError = useCallback(() => setError(null), [setError]);
 
   const activePlan = plans.find((plan) => plan.active) ?? null;
   const activePlanUnfunded =
@@ -459,11 +483,71 @@ export function useSavings(): SavingsState {
   };
 }
 
+/** Said whenever the RPC proxy or one of this app's routes fails. */
+export const NETWORK_DOWN = "Can't reach the network right now. Try again in a moment.";
+
+/** Said when a failure has no sentence of its own. The detail is in the console. */
+export const UNEXPLAINED = "That didn't go through. Try again in a moment.";
+
+/**
+ * What a developer reads and a saver cannot: an HTTP status, a JSON body, a
+ * JSON-RPC error code, a url, a stack frame, an exception's class name. The
+ * RPC client reports a failed proxy call as `500 : {"error":"..."}`, and that
+ * is the shape this exists to keep off the screen.
+ */
+const TECHNICAL: RegExp[] = [
+  /(?:^|\s)[1-5]\d\d\s*[:(]/m, // 500 : {...}, 502 (Bad Gateway)
+  /\b(?:HTTP|status(?: code)?)\s*:?\s*[1-5]\d\d\b/i,
+  /[{[]\s*"/, // {"error": or ["
+  /"\w+"\s*:/, // "error":
+  /-32\d{3}\b/, // JSON-RPC error codes
+  /\b\w+:\/\//, // urls
+  /\/api\//,
+  /^\s*at\s|\.[jt]sx?:\d+/m, // stack frames
+  /\b[A-Z]\w*Error\b|\bE[A-Z]{3,}\b/, // TypeError, SolanaJSONRPCError, ECONNREFUSED
+  /\b0x[\da-f]+\b/i,
+];
+
+export function looksTechnical(text: string): boolean {
+  return TECHNICAL.some((pattern) => pattern.test(text));
+}
+
+/**
+ * The last check before a sentence reaches the screen. Everything shown goes
+ * through here, so a raw status or body that slips past friendly() is swapped
+ * for a plain line, and the original is kept in the console for whoever
+ * debugs it.
+ */
+export function onScreen(text: string): string {
+  if (!looksTechnical(text)) {
+    return text;
+  }
+  console.error("[savings] kept off the screen:", text);
+  return UNEXPLAINED;
+}
+
+/**
+ * The RPC proxy or one of this app's own routes failed, or the request never
+ * got there. web3.js reports a proxy failure as the status and the body.
+ */
+function unreachable(message: string): boolean {
+  return (
+    /(?:^|\s)[1-5]\d\d\s*[:(]/m.test(message) ||
+    /failed to fetch|fetch failed|network ?error|load failed/i.test(message) ||
+    /ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT/.test(message) ||
+    /\b(?:502|503|504)\b.*\b(?:Bad Gateway|Service Unavailable|Gateway Timeout)\b/i.test(
+      message,
+    )
+  );
+}
+
 /**
  * Wallet and RPC errors are written for developers. A person who declined a
  * prompt, or whose connection dropped, should not be shown a stack trace.
+ * Exported for scripts/check-screen-copy.ts, which feeds it raw failures and
+ * checks that only sentences come back.
  */
-function friendly(err: unknown): string {
+export function friendly(err: unknown): string {
   if (err instanceof MarketClosedError) {
     return CASH_OUT_CLOSED;
   }
@@ -485,6 +569,14 @@ function friendly(err: unknown): string {
   if (err instanceof ForeignDelegateError) {
     return "Something else has permission to spend from your dollar account, so we left your plan as it was.";
   }
+  if (err instanceof CashOutServiceError) {
+    if (err.code === "more-than-held") {
+      return "That's more shares than you hold. Try a smaller amount.";
+    }
+    // 4xx other than the above means the screen sent something the route
+    // would not take, which is a bug, not the network.
+    return err.status >= 400 && err.status < 500 ? UNEXPLAINED : NETWORK_DOWN;
+  }
   const message = errorText(err);
 
   // Before anything else, because a wallet on the wrong network produces
@@ -494,6 +586,11 @@ function friendly(err: unknown): string {
   // "try again in a moment" sends them round the same loop forever.
   if (wrongNetwork(message)) {
     return WRONG_NETWORK;
+  }
+  // Before the cancel check: the proxy's own body says "the RPC endpoint
+  // rejected the request", which is not the saver saying no.
+  if (unreachable(message)) {
+    return NETWORK_DOWN;
   }
   if (/User rejected|rejected the request|User denied/i.test(message)) {
     return "You cancelled that.";
@@ -513,7 +610,7 @@ function friendly(err: unknown): string {
       "check your wallet before trying again."
     );
   }
-  if (/blockhash|timed out|failed to fetch|network error/i.test(message)) {
+  if (/blockhash|timed out/i.test(message)) {
     return "The network was slow to answer. Try that again.";
   }
   return unexplained(message);
@@ -556,11 +653,10 @@ const WRONG_NETWORK =
 
 /**
  * The last resort, and deliberately not a shrug. A failure nothing above
- * recognised still has a real reason in it, and hiding that behind "try again
- * in a moment" is what leaves a tester with nothing to report and no way
- * forward. So the plainest line of the underlying error is shown alongside
- * the apology: program logs and stack frames are dropped, the sentence a
- * person or a developer can act on is kept.
+ * recognised can still carry a sentence a person can act on, such as a
+ * wallet's own "Wallet not connected", and that is shown. Anything shaped
+ * like a status, a body or a log stays in the console, where run() has
+ * already written the whole error for whoever files the report.
  */
 function unexplained(message: string): string {
   const skip =
@@ -568,11 +664,12 @@ function unexplained(message: string): string {
   const line = message
     .split("\n")
     .map((part) => part.trim())
-    .find((part) => part.length > 0 && part.length < 200 && !skip.test(part));
+    .find(
+      (part) =>
+        part.length > 0 && part.length < 200 && !skip.test(part) && !looksTechnical(part),
+    );
 
-  return line
-    ? `That didn't go through. The reason given: ${line}`
-    : "That didn't go through, and no reason came back. Try again in a moment.";
+  return line ? `That didn't go through. The reason given: ${line}` : UNEXPLAINED;
 }
 
 /**
