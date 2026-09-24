@@ -5,8 +5,8 @@
 > amount you choose.
 >
 > - Live demo: <https://investire.vercel.app>
-> - Pitch video: [URL]
-> - Technical video: [URL]
+> - Pitch video: <https://youtu.be/YNUc01wQmnQ>
+> - Technical video: <https://youtu.be/jKJad8s97mg>
 > - Every number and how to check it: [SOURCES.md](SOURCES.md)
 
 Investire makes recurring USDC buys of tokenized stocks. Balances are held as
