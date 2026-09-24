@@ -172,8 +172,10 @@ function NetworkNote() {
       </p>
       <p className="mt-2 text-[14px] leading-relaxed text-muted">
         This runs on Solana&rsquo;s test network. Nothing here is real money and
-        nothing here is a real share. A wallet left on mainnet connects fine,
-        shows an empty balance, then fails at the first buy.
+        nothing here is a real share. Prices use a fixed $5 test price, so
+        share counts won&rsquo;t match real market prices. A wallet left on
+        mainnet connects fine, shows an empty balance, then fails at the first
+        buy.
       </p>
       <ul className="mt-3 space-y-1 text-[14px] leading-relaxed text-muted">
         <li>

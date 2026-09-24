@@ -1,11 +1,42 @@
 # Investire
 
-Investire is a recurring savings plan for tokenized stocks on Solana. You set
-an amount and a pace, and it buys shares automatically until you stop. It is
-built for people who hold dollars in stablecoins because their own currency is
-losing value, and who have no broker willing to take them.
+> **For Stocklana judges.** Investire is a recurring savings plan that buys
+> tokenized stocks on Solana with USDC, automatically, at whatever pace and
+> amount you choose.
+>
+> - Live demo: <https://investire.vercel.app>
+> - Pitch video: [URL]
+> - Technical video: [URL]
+> - Every number and how to check it: [SOURCES.md](SOURCES.md)
 
-Live on devnet: **<https://investire.vercel.app>**
+Investire makes recurring USDC buys of tokenized stocks. Balances are held as
+equity units read from Token-2022 scaled UI multipliers, so a balance stays
+correct whether a buy landed in NVDAx or NVDAon. On devnet the keeper runs the
+three-instruction buy against mock wrappers carrying real mainnet multipliers,
+and prices are fixed at a $5 test price until Pyth is live.
+
+### What's simulated on devnet
+
+The program, vaults, equity unit conversions, plans, delegations, withdrawals,
+cash outs, keeper and app are real and running. These stand in for what
+devnet lacks, each detailed in
+[SOURCES.md, section 8](SOURCES.md#8-what-is-substituted-on-devnet-and-what-replaces-it-on-mainnet):
+
+- [Mock wrapper mints](SOURCES.md#mock-wrapper-mints) carrying the real
+  mainnet multipliers, checked against CONTEXT.md on every setup run.
+- [An inventory transfer](SOURCES.md#the-buy-swap-leg) standing in for the
+  Jupiter swap.
+- [A fixed $5 price](SOURCES.md#the-price-quote) per share while the Pyth key
+  is pending.
+- [A cash-out co-signer](SOURCES.md#the-cash-out-sale-leg), a devnet
+  liquidity key that signs its own transfer, which a real route would not
+  need.
+
+## What it is
+
+It is built for people who hold dollars in stablecoins because their own
+currency is losing value, and who have no broker willing to take them. You set
+an amount and a pace, and it buys shares automatically until you stop.
 
 ## Why this belongs on Solana
 
@@ -83,7 +114,7 @@ the dashboard shows your shares, what you put in, and your streak, and says
 value is unavailable. Cashing out to USDC works, at a fixed devnet price of
 five dollars a share, which is the same price the devnet keeper buys at.
 
-## How it works
+## Correctness layer
 
 **The three instruction pattern.** One buy is one transaction holding exactly
 three of our instructions in order: `begin_execution` pulls the buy from the
@@ -140,25 +171,6 @@ twice to catch up, because a settled execution moves the next due date a full
 period past the late buy. On devnet today the keeper is on the flat price
 substitute below, so this check is built and tested but dormant until the Pyth
 key is live.
-
-## What is real and what is substituted
-
-Real, and running on devnet now: the program and every instruction described
-above, the vaults and their receipt mints, the equity unit conversions read
-from live mint state, plans and their delegations, withdrawals, cash outs, the
-keeper, and the app. The Pyth feed ids are verified against Pyth's published
-feed list.
-
-Substituted, because devnet has no real wrappers and no Jupiter: the wrapper
-mints are mocks carrying the real mints' multipliers, checked against
-CONTEXT.md on every setup run; both swap legs are transfers of inventory
-rather than routes; the price is a flat five dollars a share while the Pyth
-key is pending; and the devnet cash out has a liquidity key that co-signs its
-own transfer, which a real route would not need.
-
-Each substitute is marked in the code where it is used, and
-**[SOURCES.md](SOURCES.md), section 8** states for each one what it stands in
-for and what replaces it on mainnet.
 
 ## Build and run
 
